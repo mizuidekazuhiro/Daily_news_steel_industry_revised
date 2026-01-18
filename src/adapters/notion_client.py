@@ -1,3 +1,4 @@
+import random
 import time
 import requests
 
@@ -27,9 +28,11 @@ class NotionClient:
                 params=params,
                 timeout=30,
             )
-            if response.status_code == 429:
-                sleep_s = min(2 ** attempt, 30)
-                time.sleep(sleep_s)
+            if response.status_code == 429 or response.status_code >= 500:
+                retry_after = response.headers.get("Retry-After")
+                base_sleep = float(retry_after) if retry_after else min(2 ** attempt, 30)
+                jitter = random.uniform(0, 1)
+                time.sleep(base_sleep + jitter)
                 continue
             if response.status_code >= 400:
                 raise requests.HTTPError(
