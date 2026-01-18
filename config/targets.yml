@@ -1,0 +1,125 @@
+targets:
+  日本製鉄:
+    - 日本製鉄
+    - Nippon Steel
+  JFEスチール:
+    - JFEスチール
+    - JFE holdings or JFEHD
+  神戸製鋼所:
+    - 神戸製鋼所
+    - Kobe Steel OR KOBELCO
+  東京製鐵:
+    - 東京製鐵
+    - Tokyo Steel
+  大和工業:
+    - 大和工業
+    - Yamato Kogyo
+  共英製鋼:
+    - 共英製鋼
+    - Kyoei Steel
+  Bao Steel:
+    - Bao Steel OR Baowu
+    - 宝武 OR 宝山鋼鉄
+  POSCO:
+    - POSCO
+  Hyundai Steel:
+    - Hyundai Steel
+    - 現代製鉄
+  Hoa Phat:
+    - Hoa Phat Steel
+    - ホアファット
+  Formosa Ha Tinh Steel:
+    - Formosa Ha Tinh Steel
+    - フォルモサ・ハティン
+  Nucor:
+    - Nucor Steel
+    - ニューコア
+  US Steel:
+    - United States Steel
+    - USスチール
+  Arcelor Mittal:
+    - Arcelor Mittal
+  ArcelorMittal Nippon Steel India:
+    - AMNS India OR "Arcelor Mittal Nippon Steel India"
+  JSW Steel India:
+    - JSW Steel
+    - JSWスチール
+  Jindal Steel:
+    - Jindal Steel OR JSPL
+    - ジンダルスチール
+  SAIL:
+    - Steel Authority of India
+    - SAIL India
+  Tata Steel:
+    - Tata Steel
+    - タタ・スチール
+  他鉄鋼企業:
+    - Steel dynamics
+    - Blue scope
+  設備関連:
+    - Danieli OR Primetals OR SMS Germany
+  資源メジャー:
+    - Vale OR "Rio Tinto" OR "BHP billiton"Grencore
+  インド鉄鋼業:
+    - India steel
+  中国鉄鋼業:
+    - China steel
+  タイ鉄鋼業:
+    - Thailand steel
+  ベトナム鉄鋼業:
+    - Vietnam steel
+  市況（日本）:
+    - Japan AND rebar OR 鉄筋　価格
+    - Japan AND billet AND price
+    - Japan AND HRC OR 熱延鋼板 AND 価格
+    - Japan scrap price OR スクラップ AND 価格
+  市況（中国）:
+    - China rebar price
+    - China billet price
+    - China HRC price
+    - China scrap price
+    - Sanghai future steel
+  市況（ベトナム）:
+    - Vietnam rebar
+    - Vietnam HRC
+    - Vietnam scrap
+  市況（EU）:
+    - Europe rebar OR Europe billet
+    - Europe HRC
+    - Europe scrap
+  市況（トルコ）:
+    - Turkey rebar OR Turkey billet
+    - Turkey scrap
+    - Turkey steel
+  市況（米国）:
+    - US rebar
+    - US HRC
+    - US scrap
+
+enterprise_targets:
+  - 共英製鋼
+  - Hoa Phat
+  - Nucor
+  - 設備関連
+  - 市況（中国）
+  - 資源メジャー
+
+google_alert_rss:
+  共英製鋼:
+    - https://www.google.co.jp/alerts/feeds/17945613519375588184/6303475216307231439
+    - https://www.google.co.jp/alerts/feeds/17945613519375588184/15715814606530892833
+  Hoa Phat:
+    - https://www.google.co.jp/alerts/feeds/17945613519375588184/367815351543280182
+  Nucor:
+    - https://www.google.co.jp/alerts/feeds/17945613519375588184/11741416055352841363
+  設備関連:
+    - https://www.google.co.jp/alerts/feeds/17945613519375588184/10419700725920798919
+    - https://www.google.co.jp/alerts/feeds/17945613519375588184/10419700725920797945
+    - https://www.google.co.jp/alerts/feeds/17945613519375588184/16012495566185784263
+  市況（中国）:
+    - https://www.google.co.jp/alerts/feeds/17945613519375588184/12204969570867909050
+  資源メジャー:
+    - https://www.google.co.jp/alerts/feeds/17945613519375588184/1543763513009312584
+    - https://www.google.co.jp/alerts/feeds/17945613519375588184/12046708828298488823
+    - https://www.google.co.jp/alerts/feeds/17945613519375588184/12046708828298488470
+    - https://www.google.co.jp/alerts/feeds/17945613519375588184/5440060409244731347
