@@ -1,0 +1,7 @@
+sources:
+  targets: yaml
+  scorer: rule_based
+
+limits:
+  hours: 24
+  max_articles_per_label: 5
