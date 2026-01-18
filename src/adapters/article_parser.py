@@ -1,3 +1,4 @@
+import json
 from urllib.parse import urlparse
 
 import requests
@@ -12,6 +13,47 @@ def extract_source_from_url(url):
         return domain.replace("www.", "")
     except ValueError:
         return "Unknown"
+
+
+def _extract_meta_published(soup, reference_time):
+    meta_keys = {
+        "article:published_time",
+        "og:published_time",
+        "pubdate",
+        "publish_date",
+        "date",
+        "dc.date",
+        "dc.date.issued",
+        "datepublished",
+    }
+    for tag in soup.find_all("meta"):
+        key = (tag.get("property") or tag.get("name") or "").lower()
+        if key in meta_keys:
+            content = tag.get("content")
+            published = parse_publish_datetime(content, reference_time)
+            if published:
+                return published
+    return None
+
+
+def _extract_jsonld_published(soup, reference_time):
+    for script in soup.find_all("script", type="application/ld+json"):
+        try:
+            payload = json.loads(script.string or "{}")
+        except json.JSONDecodeError:
+            continue
+        if isinstance(payload, dict) and "@graph" in payload:
+            nodes = payload.get("@graph", [])
+        else:
+            nodes = payload if isinstance(payload, list) else [payload]
+        for node in nodes:
+            if not isinstance(node, dict):
+                continue
+            published = node.get("datePublished") or node.get("dateModified")
+            published_dt = parse_publish_datetime(published, reference_time)
+            if published_dt:
+                return published_dt
+    return None
 
 
 def fetch_article(url, reference_time):
@@ -29,11 +71,17 @@ def fetch_article(url, reference_time):
             paragraphs.append(t)
 
         body = "\n".join(paragraphs)
-        scraped_dt = parse_publish_datetime(soup.get_text(), reference_time)
+        published_dt = _extract_meta_published(soup, reference_time)
+        published_source = "meta"
+        if not published_dt:
+            published_dt = _extract_jsonld_published(soup, reference_time)
+            published_source = "jsonld"
+        if not published_dt:
+            published_source = "unknown"
 
-        return body, scraped_dt, body[:3000]
+        return body, published_dt, body[:3000], published_source
     except requests.RequestException:
-        return None, None, None
+        return None, None, None, None
 
 
 def classify_article(article):

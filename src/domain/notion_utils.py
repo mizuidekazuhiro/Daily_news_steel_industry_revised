@@ -1,5 +1,5 @@
 import hashlib
-from urllib.parse import urlparse, urlunparse, parse_qsl, urlencode
+from urllib.parse import urlparse, urlunparse, parse_qsl, urlencode, parse_qs
 
 
 _TRACKING_PARAMS = {
@@ -16,10 +16,22 @@ _TRACKING_PARAMS = {
 }
 
 
+def _expand_google_redirect(url):
+    parsed = urlparse(url)
+    if parsed.netloc in {"google.com", "www.google.com"} and parsed.path == "/url":
+        query = parse_qs(parsed.query)
+        if "url" in query:
+            return query["url"][0]
+        if "q" in query:
+            return query["q"][0]
+    return url
+
+
 def normalize_url(url):
     if not url:
         return ""
-    parsed = urlparse(url)
+    expanded = _expand_google_redirect(url)
+    parsed = urlparse(expanded)
     query = [(k, v) for k, v in parse_qsl(parsed.query) if k.lower() not in _TRACKING_PARAMS]
     normalized = parsed._replace(
         scheme=parsed.scheme.lower(),

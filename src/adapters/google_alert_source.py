@@ -42,7 +42,7 @@ def fetch_google_alert_articles(label, google_alert_rss, reference_time, hours=2
             url = normalize_google_alert_url(raw_url)
 
             published = parse_publish_datetime(e.get("published"), reference_time)
-            body, scraped_dt, body_excerpt = fetch_article(url, reference_time)
+            body, scraped_dt, body_excerpt, published_source = fetch_article(url, reference_time)
             if not body:
                 continue
 
@@ -54,10 +54,13 @@ def fetch_google_alert_articles(label, google_alert_rss, reference_time, hours=2
                 "title": title,
                 "body": body_excerpt,
                 "body_full": body,
+                "body_preview": body_excerpt,
                 "url": url,
                 "date": None,
                 "source": extract_source_from_url(url),
                 "final_dt": final_dt,
+                "published_at": final_dt.isoformat() if final_dt else None,
+                "published_source": published_source or "unknown",
                 "type": classify_article({
                     "title": title,
                     "body": body

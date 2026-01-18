@@ -18,7 +18,10 @@ from src.adapters.targets_yaml import load_targets
 from src.adapters.yahoo_finance import fetch_fx_rates, generate_stock_section
 from src.adapters.notion_client import NotionClient
 from src.adapters.notion_exporter import NotionExporter
+from src.adapters.notion_rules import fetch_rules_from_notion
+from src.adapters.notion_audit import write_audit_log
 from src.config import env
+from src.config.notion import load_notion_config
 from src.config.prompts import load_prompts
 from src.config.settings import load_settings
 from src.domain.time_utils import (
@@ -35,6 +38,7 @@ from src.usecases.tag_articles import apply_tags, load_tag_rules
 def main():
     logging.basicConfig(level=logging.INFO)
     settings = load_settings()
+    notion_config = load_notion_config()
     prompts = load_prompts()
     targets, enterprise_targets, google_alert_rss = load_targets()
 
@@ -46,14 +50,26 @@ def main():
 
     scorer = RuleBasedScorer.from_yaml()
     tag_rules = load_tag_rules()
+    notion_rules = []
     notion_exporter = None
-    if env.NOTION_TOKEN and env.NOTION_ARTICLES_DB_ID and env.NOTION_DAILY_DB_ID:
+    notion_client = None
+    if env.NOTION_TOKEN:
         notion_client = NotionClient(env.NOTION_TOKEN)
+    if notion_client and env.NOTION_RULES_DB_ID:
+        try:
+            notion_rules = fetch_rules_from_notion(notion_client, env.NOTION_RULES_DB_ID)
+        except Exception as exc:
+            write_audit_log(
+                {"run_id": run_id, "url": "", "step": "fetch_rules_failed", "error": str(exc)},
+            )
+            logging.exception("Failed to load Notion rules")
+    if notion_client and env.NOTION_ARTICLES_DB_ID and env.NOTION_DAILY_DB_ID:
         notion_exporter = NotionExporter(
             notion_client,
             env.NOTION_ARTICLES_DB_ID,
             env.NOTION_DAILY_DB_ID,
             run_id,
+            notion_config=notion_config,
         )
 
     fetch_fx_rates()
@@ -67,6 +83,8 @@ def main():
     all_articles_for_summary = {}
     no_article_labels = []
     notion_article_page_ids = []
+    total_articles = 0
+    notion_failures = 0
 
     for label, queries in targets.items():
         articles = []
@@ -81,7 +99,7 @@ def main():
                 if not is_within_hours(serper_dt, reference_time, hours=hours):
                     continue
 
-                body, scraped_dt, body_excerpt = fetch_article(a.get("link"), reference_time)
+                body, scraped_dt, body_excerpt, published_source = fetch_article(a.get("link"), reference_time)
                 if not body:
                     continue
 
@@ -89,16 +107,19 @@ def main():
                 if not is_within_hours(final_dt, reference_time, hours=hours):
                     continue
 
+                if not scraped_dt:
+                    published_source = "serper"
                 articles.append({
                     "title": a.get("title", ""),
                     "body": body_excerpt,
                     "body_full": body,
+                    "body_preview": body_excerpt,
                     "url": a.get("link", ""),
                     "date": format_dt_jst(final_dt),
                     "source": a.get("source", ""),
                     "final_dt": final_dt,
                     "published_at": final_dt.isoformat(),
-                    "published_source": "serper",
+                    "published_source": published_source or "unknown",
                     "type": classify_article({
                         "title": a.get("title", ""),
                         "body": body
@@ -119,12 +140,14 @@ def main():
             alert_articles = dedup_alert_articles(articles, alert_articles)
             for article in alert_articles:
                 article["date"] = format_dt_jst(article["final_dt"])
-                article["published_at"] = article["final_dt"].isoformat()
-                article["published_source"] = "unknown"
+                if not article.get("published_at"):
+                    article["published_at"] = article["final_dt"].isoformat()
+                if not article.get("published_source"):
+                    article["published_source"] = "unknown"
 
             articles.extend(alert_articles[:need])
 
-        apply_scores(articles, scorer)
+        apply_scores(articles, scorer, notion_rules=notion_rules)
         articles.sort(
             key=lambda x: (x.get("score", 0), x["final_dt"]),
             reverse=True,
@@ -133,12 +156,13 @@ def main():
         if articles:
             for article in articles:
                 article["label"] = label
-                apply_tags(article, tag_rules)
+                apply_tags(article, tag_rules, notion_rules=notion_rules)
                 if notion_exporter:
                     try:
                         page_id = notion_exporter.upsert_article(article)
                         notion_article_page_ids.append(page_id)
                     except Exception:
+                        notion_failures += 1
                         logging.exception("Failed to export article to Notion: %s", article.get("url"))
             sections += summarize_with_gpt(
                 label,
@@ -146,6 +170,7 @@ def main():
                 prompts.get("summarize_system", ""),
             )
             all_articles_for_summary[label] = articles[:max_articles]
+            total_articles += len(articles[:max_articles])
         else:
             no_article_labels.append(label)
 
@@ -176,8 +201,9 @@ def main():
         summary_text = re.sub(r"<br>", "\n", morning_summary_html)
         summary_text = re.sub(r"<[^>]+>", "", summary_text).strip()
         run_date = reference_time.astimezone(JST).date().isoformat()
+        run_stats = f"articles_saved={len(notion_article_page_ids)}, total_articles={total_articles}, notion_failures={notion_failures}"
         try:
-            notion_exporter.create_daily_summary(run_date, summary_text, notion_article_page_ids)
+            notion_exporter.create_daily_summary(run_date, summary_text, notion_article_page_ids, run_stats=run_stats)
         except Exception:
             logging.exception("Failed to create daily summary in Notion")
 

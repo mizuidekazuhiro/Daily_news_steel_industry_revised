@@ -1,0 +1,74 @@
+auto_heading: "[AUTO]"
+articles:
+  properties:
+    name:
+      name: Name
+      type: title
+    url:
+      name: URL
+      type: url
+    source:
+      name: Source
+      type: rich_text
+    label:
+      name: Label
+      type: select
+    type:
+      name: Type
+      type: select
+    country:
+      name: Country
+      type: multi_select
+    sector:
+      name: Sector
+      type: multi_select
+    primary_country:
+      name: PrimaryCountry
+      type: select
+    importance:
+      name: Importance
+      type: select
+    importance_score:
+      name: ImportanceScore
+      type: number
+    importance_reasons:
+      name: ImportanceReasons
+      type: rich_text
+    published_at:
+      name: PublishedAt
+      type: date
+    published_source:
+      name: PublishedSource
+      type: select
+    article_id:
+      name: ArticleId
+      type: rich_text
+    normalized_url:
+      name: NormalizedURL
+      type: url
+    body_hash:
+      name: BodyHash
+      type: rich_text
+    body_preview:
+      name: BodyPreview
+      type: rich_text
+daily:
+  properties:
+    name:
+      name: Name
+      type: title
+    run_id:
+      name: RunId
+      type: rich_text
+    run_date:
+      name: RunDate
+      type: date
+    morning_summary:
+      name: MorningSummary
+      type: rich_text
+    articles:
+      name: Articles
+      type: relation
+    run_stats:
+      name: RunStats
+      type: rich_text
