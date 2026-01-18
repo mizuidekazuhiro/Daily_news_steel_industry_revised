@@ -22,3 +22,7 @@ source_trust:
     weight: 2.0
   - match: prtimes.jp
     weight: 0.5
+
+importance:
+  high: 4.0
+  medium: 2.5
