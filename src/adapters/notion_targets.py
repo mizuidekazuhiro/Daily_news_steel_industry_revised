@@ -36,6 +36,10 @@ def fetch_targets_from_notion(notion_client, database_id):
             enterprise = False
             if props.get("Enterprise", {}).get("type") == "checkbox":
                 enterprise = props.get("Enterprise", {}).get("checkbox", False)
+            max_pick = None
+            max_pick_prop = props.get("MaxPick", {})
+            if max_pick_prop.get("type") == "number":
+                max_pick = max_pick_prop.get("number")
             if not label or not kind:
                 continue
             results.append({
@@ -44,6 +48,7 @@ def fetch_targets_from_notion(notion_client, database_id):
                 "query": query,
                 "rss": rss,
                 "enterprise": enterprise,
+                "max_pick": max_pick,
             })
         has_more = data.get("has_more", False)
         start_cursor = data.get("next_cursor")

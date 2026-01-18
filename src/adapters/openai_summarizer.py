@@ -69,16 +69,26 @@ def generate_morning_summary(all_articles, user_prompt):
     try:
         prompt = user_prompt + "\n"
 
-        for label, articles in all_articles.items():
-            for a in articles:
-                if a.get("type") == "STOCK":
-                    continue
-                prompt += f"""
+        if isinstance(all_articles, dict):
+            items = []
+            for label, articles in all_articles.items():
+                for article in articles:
+                    copied = dict(article)
+                    copied.setdefault("label", label)
+                    items.append(copied)
+        else:
+            items = list(all_articles or [])
+
+        for article in items:
+            if article.get("type") == "STOCK":
+                continue
+            label = article.get("label") or article.get("target_label", "")
+            prompt += f"""
 会社/テーマ: {label}
-区分: {a.get("type")}
-タイトル: {a.get("title")}
+区分: {article.get("type")}
+タイトル: {article.get("title")}
 本文:
-{a.get("body")}
+{article.get("body")}
 
 """
 
