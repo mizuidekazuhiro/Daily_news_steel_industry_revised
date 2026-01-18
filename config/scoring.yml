@@ -1,0 +1,24 @@
+weights:
+  base: 1.0
+  business: 2.0
+  green: 1.5
+  stock: 0.5
+  other: 1.0
+  high_impact_keyword: 1.0
+  low_impact_keyword: -0.5
+
+keywords:
+  high_impact:
+    - capacity
+    - investment
+    - 設備投資
+    - 新工場
+  low_impact:
+    - event
+    - award
+
+source_trust:
+  - match: reuters.com
+    weight: 2.0
+  - match: prtimes.jp
+    weight: 0.5
