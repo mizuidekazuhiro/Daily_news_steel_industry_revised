@@ -21,7 +21,7 @@ Serper検索 + Google Alert RSS補完
   ↓
 重要度スコア算出（Notion Rules優先）
   ↓
-GPT要約（ラベル別）+ 朝一サマリ生成
+GPT要約（ラベル別）+ 朝一サマリ生成（同一Labelの分散上限あり）
   ↓
 Notion ArticlesへUpsert（本文は [AUTO] ブロックに保存）
   ↓
@@ -74,6 +74,7 @@ Daily Summaryを作成しArticlesとRelation
 | Query | rich_text | Serper検索ワード |
 | RSS | url | RSS URL |
 | Enterprise | checkbox | 企業補完対象 |
+| MaxPick | number (任意) | 朝一サマリの同一Label上限を上書き（未設定時は企業=1/テーマ=2） |
 
 ### 4) Rules DB（タグ/重要度ルール管理）
 | プロパティ | 種別 | 役割 |
@@ -133,6 +134,7 @@ env:
 - Serper用なら `Kind=serper` と `Query` を入力
 - RSS用なら `Kind=rss` と `RSS` を入力
 - Enterprise補完対象は `Enterprise` をON
+- 朝一サマリの分散上限を変えたい場合は `MaxPick` に数値を入力（未設定なら企業=1/テーマ=2）
 
 ### タグ/重要度ルールを追加/無効化したい
 - Rules DBに新規行を追加し、`Enabled` をON

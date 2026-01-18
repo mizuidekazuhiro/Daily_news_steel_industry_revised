@@ -4,6 +4,7 @@
 import logging
 import re
 import time
+from collections import defaultdict
 
 from src.adapters.article_parser import fetch_article, classify_article
 from src.adapters.email_notifier import send_mail
@@ -11,6 +12,7 @@ from src.adapters.google_alert_source import (
     fetch_google_alert_articles,
     dedup_alert_articles,
 )
+
 from src.adapters.openai_summarizer import summarize_with_gpt, generate_morning_summary
 from src.adapters.rule_based_scorer import RuleBasedScorer
 from src.adapters.serper_source import search_serper
@@ -35,12 +37,40 @@ from src.usecases.score_articles import apply_scores
 from src.usecases.tag_articles import apply_tags, load_tag_rules
 
 
+def apply_diversity_limits_for_global_summary(articles, targets_by_label, top_n):
+    """Pick top articles with per-label caps (Enterprise=1, Theme=2 by default)."""
+    picked = []
+    label_counts = defaultdict(int)
+
+    for article in articles:
+        label = article.get("target_label") or article.get("label")
+        target_info = targets_by_label.get(label, {})
+        max_pick = target_info.get("max_pick")
+        if max_pick is None:
+            # Default limits: Enterprise=1, Theme=2
+            is_enterprise = target_info.get("enterprise", False)
+            max_pick = 1 if is_enterprise else 2
+
+        if max_pick <= 0:
+            continue
+        if label_counts[label] >= max_pick:
+            continue
+
+        # Respect the per-label limit while keeping score order.
+        picked.append(article)
+        label_counts[label] += 1
+        if len(picked) >= top_n:
+            break
+
+    return picked
+
+
 def main():
     logging.basicConfig(level=logging.INFO)
     settings = load_settings()
     notion_config = load_notion_config()
     prompts = load_prompts()
-    targets, enterprise_targets, google_alert_rss = load_targets()
+    targets, enterprise_targets, google_alert_rss, targets_by_label = load_targets()
 
     reference_time = now_utc()
     today_str = reference_time.strftime("%Y%m%d")
@@ -79,8 +109,8 @@ def main():
     </div>
     """
 
-    sections = ""
-    all_articles_for_summary = {}
+    sections = []
+    all_scored_articles = []
     no_article_labels = []
     notion_article_page_ids = []
     total_articles = 0
@@ -124,6 +154,7 @@ def main():
                         "title": a.get("title", ""),
                         "body": body
                     }),
+                    "target_label": label,
                 })
 
         articles.sort(key=lambda x: x["final_dt"], reverse=True)
@@ -144,6 +175,7 @@ def main():
                     article["published_at"] = article["final_dt"].isoformat()
                 if not article.get("published_source"):
                     article["published_source"] = "unknown"
+                article["target_label"] = label
 
             articles.extend(alert_articles[:need])
 
@@ -154,6 +186,7 @@ def main():
         )
 
         if articles:
+            all_scored_articles.extend(articles)
             for article in articles:
                 article["label"] = label
                 apply_tags(article, tag_rules, notion_rules=notion_rules)
@@ -164,34 +197,50 @@ def main():
                     except Exception:
                         notion_failures += 1
                         logging.exception("Failed to export article to Notion: %s", article.get("url"))
-            sections += summarize_with_gpt(
-                label,
-                articles[:max_articles],
-                prompts.get("summarize_system", ""),
-            )
-            all_articles_for_summary[label] = articles[:max_articles]
+            sections.append({
+                "label": label,
+                "score": articles[0].get("score", 0),
+                "html": summarize_with_gpt(
+                    label,
+                    articles[:max_articles],
+                    prompts.get("summarize_system", ""),
+                ),
+            })
             total_articles += len(articles[:max_articles])
         else:
             no_article_labels.append(label)
 
         time.sleep(1)
 
+    sections.sort(key=lambda item: item["score"], reverse=True)
+    sections_html = "".join(section["html"] for section in sections)
     if no_article_labels:
         joined = "、".join(no_article_labels)
-        sections += f"""
+        sections_html += f"""
         <div style="font-family:'Meiryo UI', sans-serif; padding:16px; color:#777; font-size:13px; border-bottom:1px solid #ddd;">
             該当記事なし企業一覧：{joined}
         </div><br>
         """
 
+    # Build diversified TopN for the global summary (morning section).
+    global_summary_top_n = settings.get("limits", {}).get("global_summary_top_n", 7)
+    all_scored_articles.sort(
+        key=lambda x: (x.get("score", 0), x.get("final_dt")),
+        reverse=True,
+    )
+    diversified_articles = apply_diversity_limits_for_global_summary(
+        all_scored_articles,
+        targets_by_label,
+        global_summary_top_n,
+    )
     morning_summary_html = generate_morning_summary(
-        all_articles_for_summary,
+        diversified_articles,
         prompts.get("morning_summary_user", ""),
     )
     final_html = (
         notice_html
         + morning_summary_html
-        + sections
+        + sections_html
         + generate_stock_section()
     )
 
