@@ -31,9 +31,9 @@ def fetch_article(url, reference_time):
         body = "\n".join(paragraphs)
         scraped_dt = parse_publish_datetime(soup.get_text(), reference_time)
 
-        return body[:3000], scraped_dt
+        return body, scraped_dt, body[:3000]
     except requests.RequestException:
-        return None, None
+        return None, None, None
 
 
 def classify_article(article):

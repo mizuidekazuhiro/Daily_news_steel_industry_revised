@@ -1,0 +1,39 @@
+countries:
+  Japan:
+    - 日本
+    - Japan
+    - Tokyo
+  China:
+    - 中国
+    - China
+  United States:
+    - 米国
+    - U.S.
+    - USA
+    - United States
+  Korea:
+    - 韓国
+    - Korea
+  India:
+    - インド
+    - India
+  Europe:
+    - 欧州
+    - EU
+    - Europe
+
+sectors:
+  Steel:
+    - steel
+    - 鋼
+    - 鉄鋼
+  Automotive:
+    - automotive
+    - 自動車
+  Energy:
+    - energy
+    - エネルギー
+    - 電力
+  Construction:
+    - construction
+    - 建設
