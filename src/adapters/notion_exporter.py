@@ -1,5 +1,58 @@
+import re
+
 from src.adapters.notion_audit import write_audit_log
-from src.domain.notion_utils import compute_article_id, compute_body_hash, normalize_url, split_text_blocks
+from src.domain.notion_utils import compute_article_id, compute_body_hash, normalize_url
+
+
+def truncate_text(text, max_len):
+    if not text:
+        return ""
+    normalized = re.sub(r"\s+", " ", text).strip()
+    if len(normalized) <= max_len:
+        return normalized
+    if max_len <= 1:
+        return "…" if max_len == 1 else ""
+    return normalized[: max_len - 1].rstrip() + "…"
+
+
+def chunk_text(text, chunk_size):
+    if not text:
+        return []
+    chunks = []
+    current = ""
+    for line in text.splitlines():
+        if len(line) > chunk_size:
+            if current:
+                chunks.append(current)
+                current = ""
+            for i in range(0, len(line), chunk_size):
+                chunks.append(line[i : i + chunk_size])
+            continue
+        candidate = f"{current}\n{line}".strip() if current else line
+        if len(candidate) > chunk_size:
+            if current:
+                chunks.append(current)
+            current = line
+        else:
+            current = candidate
+    if current:
+        chunks.append(current)
+    return chunks
+
+
+def build_children_blocks(full_text, chunk_size=1800):
+    blocks = []
+    for chunk in chunk_text(full_text, chunk_size):
+        blocks.append(
+            {
+                "object": "block",
+                "type": "paragraph",
+                "paragraph": {
+                    "rich_text": [{"type": "text", "text": {"content": chunk}}],
+                },
+            }
+        )
+    return blocks
 
 
 class NotionExporter:
@@ -100,7 +153,7 @@ class NotionExporter:
         elif prop_type == "relation":
             properties[name] = {"relation": [{"id": v} for v in value or []]}
 
-    def _build_article_properties(self, article, normalized_url, article_id, body_hash):
+    def _build_article_properties(self, article, normalized_url, article_id, body_hash, body_preview):
         label = article.get("label")
         article_type = article.get("type")
         importance = article.get("importance")
@@ -109,7 +162,6 @@ class NotionExporter:
         importance_reasons = article.get("importance_reasons") or ""
         if isinstance(importance_reasons, list):
             importance_reasons = "; ".join(importance_reasons)
-        body_preview = article.get("body_preview") or article.get("body") or ""
         properties = {}
         self._set_property(properties, "name", article.get("title", ""), self.DEFAULT_ARTICLE_PROPERTIES)
         self._set_property(properties, "url", article.get("url", ""), self.DEFAULT_ARTICLE_PROPERTIES)
@@ -142,107 +194,38 @@ class NotionExporter:
         results = data.get("results", [])
         return results[0] if results else None
 
-    def _find_auto_heading_block(self, page_id):
-        start_cursor = None
-        while True:
-            children = self.client.list_block_children(page_id, start_cursor=start_cursor)
-            for block in children.get("results", []):
-                block_type = block.get("type")
-                if block_type and block_type.startswith("heading_"):
-                    rich_text = block.get(block_type, {}).get("rich_text", [])
-                    text = "".join(t.get("plain_text", "") for t in rich_text)
-                    if text.strip() == self.auto_heading:
-                        return block
-            if not children.get("has_more"):
-                break
-            start_cursor = children.get("next_cursor")
-        return None
-
-    def _ensure_auto_heading(self, page_id):
-        existing = self._find_auto_heading_block(page_id)
-        if existing:
-            return existing.get("id")
-        payload = {
-            "children": [
-                {
-                    "object": "block",
-                    "type": "heading_2",
-                    "heading_2": {
-                        "rich_text": [{"type": "text", "text": {"content": self.auto_heading}}],
-                        "is_toggleable": True,
-                    },
-                }
-            ]
-        }
-        created = self.client.append_block_children(page_id, payload)
-        results = created.get("results", [])
-        return results[0].get("id") if results else None
-
-    def _clear_auto_blocks(self, block_id):
-        if not block_id:
-            return
-        start_cursor = None
-        while True:
-            children = self.client.list_block_children(block_id, start_cursor=start_cursor)
-            for block in children.get("results", []):
-                self.client.delete_block(block["id"])
-            if not children.get("has_more"):
-                break
-            start_cursor = children.get("next_cursor")
-
-    def _append_body_blocks(self, block_id, body_text):
-        chunks = split_text_blocks(body_text)
-        for i in range(0, len(chunks), 100):
-            slice_blocks = chunks[i:i + 100]
-            payload = {
-                "children": [
-                    {
-                        "object": "block",
-                        "type": "paragraph",
-                        "paragraph": {
-                            "rich_text": [{"type": "text", "text": {"content": chunk}}]
-                        },
-                    }
-                    for chunk in slice_blocks
-                ]
-            }
-            self.client.append_block_children(block_id, payload)
-
     def upsert_article(self, article):
         normalized_url = normalize_url(article.get("url", ""))
         article_id = compute_article_id(normalized_url)
-        body_hash = compute_body_hash(article.get("body_full", ""))
-        body_text = article.get("body_full", "")
+        body_sources = [
+            article.get("body_full"),
+            article.get("content"),
+            article.get("body"),
+            article.get("body_preview"),
+        ]
+        body_text = max((text or "" for text in body_sources), key=len)
+        body_hash = compute_body_hash(body_text)
+        body_preview = truncate_text(body_text, 800)
         if not article_id:
             error = ValueError("ArticleId is empty")
             self._log_error(article.get("url", ""), "missing_article_id", error)
             raise error
         try:
             page = self._find_article_page(article_id)
-            properties = self._build_article_properties(article, normalized_url, article_id, body_hash)
+            properties = self._build_article_properties(article, normalized_url, article_id, body_hash, body_preview)
             if page:
                 page_id = page["id"]
-                current_hash = ""
-                body_hash_name = self._property_name("body_hash", self.DEFAULT_ARTICLE_PROPERTIES) or "BodyHash"
-                body_hash_prop = page.get("properties", {}).get(body_hash_name, {})
-                if body_hash_prop.get("type") == "rich_text":
-                    current_hash = "".join(t.get("plain_text", "") for t in body_hash_prop.get("rich_text", []))
                 self.client.update_page(page_id, {"properties": properties})
-                if current_hash != body_hash:
-                    auto_block_id = self._ensure_auto_heading(page_id)
-                    self._clear_auto_blocks(auto_block_id)
-                    if body_text:
-                        self._append_body_blocks(auto_block_id or page_id, body_text)
                 return page_id
             payload = {
                 "parent": {"database_id": self.articles_db_id},
                 "properties": properties,
             }
+            children = build_children_blocks(body_text)
+            if children:
+                payload["children"] = children
             created = self.client.create_page(payload)
             page_id = created["id"]
-            if body_text:
-                auto_block_id = self._ensure_auto_heading(page_id)
-                self._append_body_blocks(auto_block_id or page_id, body_text)
             return page_id
         except Exception as exc:
             self._log_error(article.get("url", ""), "upsert_article_failed", exc)
