@@ -1,3 +1,4 @@
+import logging
 import re
 
 from src.adapters.notion_audit import write_audit_log
@@ -175,6 +176,8 @@ class NotionExporter:
         self.auto_heading = notion_config.get("auto_heading", "[AUTO]")
         self.article_properties = notion_config.get("articles", {}).get("properties", {})
         self.daily_properties = notion_config.get("daily", {}).get("properties", {})
+        self._daily_schema_cache = None
+        self._daily_schema_logged = False
 
     def _log_error(self, url, reason, error):
         write_audit_log(
@@ -225,6 +228,96 @@ class NotionExporter:
             properties[name] = {"date": {"start": value}} if value else {"date": None}
         elif prop_type == "relation":
             properties[name] = {"relation": [{"id": v} for v in value or []]}
+
+    def _get_daily_schema(self):
+        if self._daily_schema_cache is not None:
+            return self._daily_schema_cache
+        try:
+            schema = self.client.get_database(self.daily_db_id)
+            self._daily_schema_cache = schema
+            properties = schema.get("properties", {})
+            if not self._daily_schema_logged:
+                logging.info(
+                    "Daily summary DB properties: %s",
+                    ", ".join(sorted(properties.keys())),
+                )
+                self._daily_schema_logged = True
+            run_id_name = self._property_name("run_id", self.DEFAULT_DAILY_PROPERTIES) or "RunId"
+            if run_id_name not in properties:
+                logging.warning(
+                    "RunId property '%s' not found in Daily summary DB schema.",
+                    run_id_name,
+                )
+            self._log_daily_schema_type_mismatches(properties)
+            return schema
+        except Exception as exc:
+            logging.error("Failed to fetch Daily summary DB schema: %s", exc)
+            return None
+
+    def _log_daily_schema_type_mismatches(self, properties):
+        for key in self.DEFAULT_DAILY_PROPERTIES:
+            config = self._get_property_config(key, self.DEFAULT_DAILY_PROPERTIES)
+            name = config.get("name")
+            expected_type = config.get("type")
+            if not name or not expected_type:
+                continue
+            schema_prop = properties.get(name)
+            if not schema_prop:
+                continue
+            actual_type = schema_prop.get("type")
+            if actual_type and actual_type != expected_type:
+                logging.warning(
+                    "Daily summary DB property '%s' type mismatch: expected %s, got %s.",
+                    name,
+                    expected_type,
+                    actual_type,
+                )
+
+    def _filter_properties_by_schema(self, properties, schema_properties):
+        allowed = set(schema_properties.keys())
+        filtered = {}
+        skipped = []
+        for name, value in properties.items():
+            if name in allowed:
+                filtered[name] = value
+            else:
+                skipped.append(name)
+        if skipped:
+            logging.warning(
+                "Skipping Daily summary properties not in DB schema: %s",
+                ", ".join(sorted(skipped)),
+            )
+        return filtered, skipped
+
+    def prepare_daily_summary_payload(
+        self,
+        run_date,
+        morning_summary,
+        article_page_ids,
+        run_stats=None,
+        schema_properties=None,
+    ):
+        properties = {}
+        self._set_property(
+            properties,
+            "name",
+            f"Daily Summary {run_date}",
+            self.DEFAULT_DAILY_PROPERTIES,
+        )
+        self._set_property(properties, "run_id", self.run_id, self.DEFAULT_DAILY_PROPERTIES)
+        self._set_property(properties, "run_date", run_date, self.DEFAULT_DAILY_PROPERTIES)
+        short_text = make_short_summary(morning_summary)
+        self._set_property(properties, "morning_summary", short_text, self.DEFAULT_DAILY_PROPERTIES)
+        self._set_property(properties, "articles", article_page_ids, self.DEFAULT_DAILY_PROPERTIES)
+        self._set_property(properties, "run_stats", run_stats, self.DEFAULT_DAILY_PROPERTIES)
+        skipped = []
+        if schema_properties is not None:
+            properties, skipped = self._filter_properties_by_schema(properties, schema_properties)
+        payload = {
+            "parent": {"database_id": self.daily_db_id},
+            "properties": properties,
+        }
+        return payload, skipped
 
     def _build_article_properties(self, article, normalized_url, article_id, body_hash, body_preview):
         label = article.get("label")
@@ -328,23 +421,15 @@ class NotionExporter:
 
     def create_daily_summary(self, run_date, morning_summary, article_page_ids, run_stats=None):
         try:
-            properties = {}
-            self._set_property(
-                properties,
-                "name",
-                f"Daily Summary {run_date}",
-                self.DEFAULT_DAILY_PROPERTIES,
+            schema = self._get_daily_schema()
+            schema_properties = schema.get("properties", {}) if schema else None
+            payload, _skipped = self.prepare_daily_summary_payload(
+                run_date,
+                morning_summary,
+                article_page_ids,
+                run_stats=run_stats,
+                schema_properties=schema_properties,
             )
-            self._set_property(properties, "run_id", self.run_id, self.DEFAULT_DAILY_PROPERTIES)
-            self._set_property(properties, "run_date", run_date, self.DEFAULT_DAILY_PROPERTIES)
-            short_text = make_short_summary(morning_summary)
-            self._set_property(properties, "morning_summary", short_text, self.DEFAULT_DAILY_PROPERTIES)
-            self._set_property(properties, "articles", article_page_ids, self.DEFAULT_DAILY_PROPERTIES)
-            self._set_property(properties, "run_stats", run_stats, self.DEFAULT_DAILY_PROPERTIES)
-            payload = {
-                "parent": {"database_id": self.daily_db_id},
-                "properties": properties,
-            }
             created = self.client.create_page(payload)
             page_id = created["id"]
             self._append_full_summary(page_id, morning_summary)
