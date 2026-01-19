@@ -15,6 +15,78 @@ def truncate_text(text, max_len):
     return normalized[: max_len - 1].rstrip() + "…"
 
 
+def make_short_summary(text, limit=1200):
+    if not text:
+        return ""
+    if len(text) <= limit:
+        return text
+    delimiters = ["\n\n", "\n", "。", ".", " "]
+    for delimiter in delimiters:
+        index = text.rfind(delimiter, 0, limit + 1)
+        if index > 0:
+            candidate = text[: index + len(delimiter)].rstrip()
+            if candidate:
+                if len(candidate) >= limit:
+                    candidate = candidate[: max(limit - 1, 0)].rstrip()
+                return f"{candidate}…"
+    if limit <= 1:
+        return "…" if limit == 1 else ""
+    return f"{text[: limit - 1].rstrip()}…"
+
+
+def split_for_notion_blocks(text, chunk_size=1800):
+    if not text:
+        return []
+    chunks = []
+    current = ""
+
+    def flush_current():
+        nonlocal current
+        if current:
+            chunks.append(current)
+            current = ""
+
+    def append_line(line, separator):
+        nonlocal current
+        candidate = f"{current}{separator}{line}" if current else line
+        if len(candidate) > chunk_size:
+            flush_current()
+            if len(line) > chunk_size:
+                for i in range(0, len(line), chunk_size):
+                    chunks.append(line[i : i + chunk_size])
+                return
+            current = line
+        else:
+            current = candidate
+
+    paragraphs = text.split("\n\n")
+    for paragraph in paragraphs:
+        if len(paragraph) > chunk_size:
+            flush_current()
+            for line in paragraph.split("\n"):
+                append_line(line, "\n")
+            flush_current()
+        else:
+            append_line(paragraph, "\n\n")
+    flush_current()
+    return chunks
+
+
+def build_paragraph_blocks(chunks):
+    blocks = []
+    for chunk in chunks:
+        blocks.append(
+            {
+                "object": "block",
+                "type": "paragraph",
+                "paragraph": {
+                    "rich_text": [{"type": "text", "text": {"content": chunk}}],
+                },
+            }
+        )
+    return blocks
+
+
 def chunk_text(text, chunk_size):
     if not text:
         return []
@@ -83,6 +155,7 @@ class NotionExporter:
         "articles": {"name": "Articles", "type": "relation"},
         "run_stats": {"name": "RunStats", "type": "rich_text"},
     }
+    FULL_SUMMARY_MARKER = "## Morning Summary (Full)"
 
     def __init__(
         self,
@@ -194,6 +267,28 @@ class NotionExporter:
         results = data.get("results", [])
         return results[0] if results else None
 
+    def _full_summary_exists(self, page_id):
+        cursor = None
+        while True:
+            response = self.client.list_block_children(page_id, start_cursor=cursor)
+            for block in response.get("results", []):
+                if block.get("type") != "paragraph":
+                    continue
+                rich_text = block.get("paragraph", {}).get("rich_text", [])
+                content = "".join(item.get("plain_text", "") for item in rich_text)
+                if self.FULL_SUMMARY_MARKER in content:
+                    return True
+            if not response.get("has_more"):
+                return False
+            cursor = response.get("next_cursor")
+
+    def _append_full_summary(self, page_id, summary_text):
+        if not summary_text or self._full_summary_exists(page_id):
+            return
+        chunks = split_for_notion_blocks(summary_text, 1800)
+        blocks = build_paragraph_blocks([self.FULL_SUMMARY_MARKER] + chunks)
+        self.client.append_block_children(page_id, {"children": blocks})
+
     def upsert_article(self, article):
         normalized_url = normalize_url(article.get("url", ""))
         article_id = compute_article_id(normalized_url)
@@ -242,7 +337,8 @@ class NotionExporter:
             )
             self._set_property(properties, "run_id", self.run_id, self.DEFAULT_DAILY_PROPERTIES)
             self._set_property(properties, "run_date", run_date, self.DEFAULT_DAILY_PROPERTIES)
-            self._set_property(properties, "morning_summary", morning_summary, self.DEFAULT_DAILY_PROPERTIES)
+            short_text = make_short_summary(morning_summary)
+            self._set_property(properties, "morning_summary", short_text, self.DEFAULT_DAILY_PROPERTIES)
             self._set_property(properties, "articles", article_page_ids, self.DEFAULT_DAILY_PROPERTIES)
             self._set_property(properties, "run_stats", run_stats, self.DEFAULT_DAILY_PROPERTIES)
             payload = {
@@ -250,7 +346,9 @@ class NotionExporter:
                 "properties": properties,
             }
             created = self.client.create_page(payload)
-            return created["id"]
+            page_id = created["id"]
+            self._append_full_summary(page_id, morning_summary)
+            return page_id
         except Exception as exc:
             self._log_error("", "create_daily_summary_failed", exc)
             raise
