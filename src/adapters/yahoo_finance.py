@@ -46,13 +46,18 @@ def fetch_stock_from_quote(ticker):
 
         q = result[0]
         price = q.get("regularMarketPrice")
-        market_cap = q.get("marketCap")
         currency = q.get("currency")
-        ts = q.get("regularMarketTime")
-        if price is None or market_cap is None or currency is None or ts is None:
+        if price is None or currency is None:
+            # APIブロックやJSON構造の変更で最低限の価格情報が欠落した場合は表示できない
             return None
 
-        trading_date = datetime.fromtimestamp(ts, timezone.utc)
+        market_cap = q.get("marketCap")
+        ts = q.get("regularMarketTime")
+        if ts is None:
+            # regularMarketTimeが欠ける銘柄は存在するため、日付は任意にする
+            trading_date = None
+        else:
+            trading_date = datetime.fromtimestamp(ts, timezone.utc)
         diff_pct = q.get("regularMarketChangePercent")
         if diff_pct is None:
             prev_close = q.get("regularMarketPreviousClose")
@@ -68,7 +73,8 @@ def fetch_stock_from_quote(ticker):
             "source": "quote",
         }
 
-    except requests.RequestException:
+    except (requests.RequestException, ValueError, KeyError):
+        # JSONパース失敗や予期しないレスポンス構造のときは株価表示を諦める
         return None
 
 
