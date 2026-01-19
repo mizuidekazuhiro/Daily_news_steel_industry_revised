@@ -1,5 +1,5 @@
-`main.py`
-```python
+main.py
+python
 import logging
 import re
 import time
