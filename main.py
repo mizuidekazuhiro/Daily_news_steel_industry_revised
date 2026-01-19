@@ -83,6 +83,9 @@ def main():
     notion_client = None
     if env.NOTION_TOKEN:
         notion_client = NotionClient(env.NOTION_TOKEN)
+        logging.info("Notion integration enabled: token found")
+    else:
+        logging.info("Notion integration disabled: NOTION_TOKEN is missing")
     if notion_client and env.NOTION_RULES_DB_ID:
         try:
             notion_rules = fetch_rules_from_notion(notion_client, env.NOTION_RULES_DB_ID)
@@ -91,6 +94,8 @@ def main():
                 {"run_id": run_id, "url": "", "step": "fetch_rules_failed", "error": str(exc)},
             )
             logging.exception("Failed to load Notion rules")
+    elif notion_client:
+        logging.info("Notion rules disabled: NOTION_RULES_DB_ID is missing")
     if notion_client and env.NOTION_ARTICLES_DB_ID and env.NOTION_DAILY_DB_ID:
         notion_exporter = NotionExporter(
             notion_client,
@@ -99,6 +104,14 @@ def main():
             run_id,
             notion_config=notion_config,
         )
+        logging.info("Notion exporter configured for articles and daily summary")
+    elif notion_client:
+        missing = []
+        if not env.NOTION_ARTICLES_DB_ID:
+            missing.append("NOTION_ARTICLES_DB_ID")
+        if not env.NOTION_DAILY_DB_ID:
+            missing.append("NOTION_DAILY_DB_ID")
+        logging.info("Notion exporter disabled: missing %s", ", ".join(missing))
 
     fetch_fx_rates()
     notice_html = """
@@ -192,6 +205,7 @@ def main():
                     try:
                         page_id = notion_exporter.upsert_article(article)
                         notion_article_page_ids.append(page_id)
+                        logging.info("Notion article upserted: %s", page_id)
                     except Exception:
                         notion_failures += 1
                         logging.exception("Failed to export article to Notion: %s", article.get("url"))
@@ -251,6 +265,7 @@ def main():
         run_stats = f"articles_saved={len(notion_article_page_ids)}, total_articles={total_articles}, notion_failures={notion_failures}"
         try:
             notion_exporter.create_daily_summary(run_date, summary_text, notion_article_page_ids, run_stats=run_stats)
+            logging.info("Notion daily summary created for %s", run_date)
         except Exception:
             logging.exception("Failed to create daily summary in Notion")
 
