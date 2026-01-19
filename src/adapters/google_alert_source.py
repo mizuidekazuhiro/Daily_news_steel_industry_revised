@@ -3,7 +3,7 @@ import urllib.parse
 
 import feedparser
 
-from src.domain.time_utils import parse_publish_datetime, is_within_hours
+from src.domain.time_utils import parse_publish_datetime, is_within_hours, ensure_aware_utc
 from src.adapters.article_parser import fetch_article, classify_article, extract_source_from_url
 
 
@@ -46,7 +46,7 @@ def fetch_google_alert_articles(label, google_alert_rss, reference_time, hours=2
             if not body:
                 continue
 
-            final_dt = scraped_dt or published
+            final_dt = ensure_aware_utc(scraped_dt or published)
             if not is_within_hours(final_dt, reference_time, hours=hours):
                 continue
 
