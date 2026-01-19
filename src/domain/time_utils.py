@@ -52,4 +52,12 @@ def parse_publish_datetime(text, reference_time):
 def is_within_hours(dt, reference_time, hours=24):
     if not dt:
         return False
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    else:
+        dt = dt.astimezone(timezone.utc)
+    if reference_time.tzinfo is None:
+        reference_time = reference_time.replace(tzinfo=timezone.utc)
+    else:
+        reference_time = reference_time.astimezone(timezone.utc)
     return dt >= reference_time - timedelta(hours=hours)
