@@ -21,5 +21,6 @@ NOTION_DAILY_DB_ID = os.getenv("NOTION_DAILY_DB_ID")
 NOTION_TARGETS_DB_ID = os.getenv("NOTION_TARGETS_DB_ID")
 NOTION_RULES_DB_ID = os.getenv("NOTION_RULES_DB_ID")
 
-SMTP_SERVER = "smtp.gmail.com"
-SMTP_PORT = 587
+SMTP_SERVER = os.getenv("SMTP_SERVER", "smtp.gmail.com")
+SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
+SMTP_USE_SSL = os.getenv("SMTP_USE_SSL", "").lower() in ("1", "true", "yes")
