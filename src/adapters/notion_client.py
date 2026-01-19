@@ -45,6 +45,9 @@ class NotionClient:
     def query_database(self, database_id, payload):
         return self._request("POST", f"/databases/{database_id}/query", json_body=payload)
 
+    def get_database(self, database_id):
+        return self._request("GET", f"/databases/{database_id}")
+
     def create_page(self, payload):
         return self._request("POST", "/pages", json_body=payload)
 
