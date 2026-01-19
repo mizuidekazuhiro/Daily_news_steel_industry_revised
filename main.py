@@ -28,6 +28,7 @@ from src.domain.time_utils import (
     format_dt_jst,
     parse_publish_datetime,
     is_within_hours,
+    ensure_aware_utc,
     JST,
 )
 from src.usecases.score_articles import apply_scores
@@ -130,7 +131,7 @@ def main():
                 if not body:
                     continue
 
-                final_dt = scraped_dt or serper_dt
+                final_dt = ensure_aware_utc(scraped_dt or serper_dt)
                 if not is_within_hours(final_dt, reference_time, hours=hours):
                     continue
 
