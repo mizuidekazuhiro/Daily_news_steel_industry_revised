@@ -28,95 +28,52 @@ def fetch_fx_rates():
         FX_RATES["VND"] = 0.006
 
 
-def fetch_stock_from_chart(ticker):
-    url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}"
-    params = {"interval": "1d", "range": "1mo"}
-
-    try:
-        res = requests.get(url, params=params, headers=HEADERS, timeout=10)
-        res.raise_for_status()
-
-        data = res.json().get("chart", {}).get("result")
-        if not data:
-            return None
-
-        meta = data[0].get("meta", {})
-        price = meta.get("regularMarketPrice")
-        prev = meta.get("previousClose")
-
-        if price is None or prev is None:
-            return None
-
-        return {
-            "price": price,
-            "diff_pct": (price - prev) / prev * 100 if prev else None,
-            "trading_date": None,
-            "source": "chart",
-        }
-
-    except requests.HTTPError:
-        return None
-
-
 def fetch_stock_from_quote(ticker):
     quote_url = "https://query1.finance.yahoo.com/v7/finance/quote"
 
-    r = requests.get(
-        quote_url,
-        params={"symbols": ticker},
-        headers=HEADERS,
-        timeout=10
-    )
-    r.raise_for_status()
-
-    result = r.json()["quoteResponse"]["result"]
-    if not result:
-        return None
-
-    q = result[0]
-    price = q.get("regularMarketPrice")
-    if price is None:
-        return None
-
-    ts = q.get("regularMarketTime")
-    trading_date = datetime.fromtimestamp(ts, timezone.utc) if ts else None
-
-    return {
-        "price": price,
-        "diff_pct": None,
-        "trading_date": trading_date,
-        "source": "quote",
-    }
-
-
-def fetch_stock_snapshot(ticker):
     try:
-        snap = fetch_stock_from_chart(ticker)
-        time.sleep(1.5)
-
-        if not snap:
-            snap = fetch_stock_from_quote(ticker)
-
-        if not snap:
-            return None
-
-        quote_url = "https://query1.finance.yahoo.com/v7/finance/quote"
-        qr = requests.get(
+        r = requests.get(
             quote_url,
             params={"symbols": ticker},
             headers=HEADERS,
             timeout=10
         )
-        qr.raise_for_status()
+        r.raise_for_status()
 
-        info = qr.json()["quoteResponse"]["result"][0]
-        snap["market_cap"] = info.get("marketCap")
-        snap["currency"] = info.get("currency") or "JPY"
+        result = r.json()["quoteResponse"]["result"]
+        if not result:
+            return None
 
-        return snap
+        q = result[0]
+        price = q.get("regularMarketPrice")
+        market_cap = q.get("marketCap")
+        currency = q.get("currency")
+        ts = q.get("regularMarketTime")
+        if price is None or market_cap is None or currency is None or ts is None:
+            return None
+
+        trading_date = datetime.fromtimestamp(ts, timezone.utc)
+        diff_pct = q.get("regularMarketChangePercent")
+        if diff_pct is None:
+            prev_close = q.get("regularMarketPreviousClose")
+            if prev_close:
+                diff_pct = (price - prev_close) / prev_close * 100
+
+        return {
+            "price": price,
+            "diff_pct": diff_pct,
+            "trading_date": trading_date,
+            "market_cap": market_cap,
+            "currency": currency,
+            "source": "quote",
+        }
 
     except requests.RequestException:
         return None
+
+
+def fetch_stock_snapshot(ticker):
+    return fetch_stock_from_quote(ticker)
 
 
 def format_market_cap(value, currency):
@@ -161,6 +118,7 @@ def generate_stock_section():
         if not snap:
             continue
 
+        time.sleep(0.5)
         snaps.append(snap)
 
         price = snap["price"]

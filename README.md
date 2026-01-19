@@ -4,6 +4,12 @@
 Serper検索とGoogle Alert RSSで記事を集め、本文抽出・分類・スコアリング・タグ付けを行い、GPT要約と株価情報を組み合わせたHTMLを生成してメール送信します。
 Notion連携が有効な場合は、記事ログ・日次サマリ・検索条件・タグ/重要度ルールをNotion中心で運用できます。
 
+## GPT投入件数のルール
+
+- **ラベル別要約**: 1ラベルあたり最大 `max_articles_per_label` 件をGPTへ投入します（デフォルト 5 件）。
+- **朝一サマリ**: 全ラベルからスコア上位を抽出したうえで `global_summary_top_n` 件をGPTへ投入します（未設定時は 7 件）。同一ラベルの分散上限は **企業=1件 / テーマ=2件** がデフォルトで、Notion Targets の `MaxPick` で上書き可能です。
+- **変更方法**: 件数ルールを変更したい場合は `config/settings.yml`（`max_articles_per_label`）と `main.py` の `global_summary_top_n` 参照箇所を調整してください。
+
 ## 全体像（処理フロー）
 
 ```
