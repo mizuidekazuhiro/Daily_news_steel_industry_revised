@@ -32,6 +32,7 @@ from src.domain.time_utils import (
     JST,
 )
 from src.usecases.score_articles import apply_scores
+from src.usecases.summary_select import select_summary_articles, importance_value
 from src.usecases.tag_articles import apply_tags, load_tag_rules
 
 
@@ -215,6 +216,7 @@ def main():
                 "html": summarize_with_gpt(
                     label,
                     articles[:max_articles],
+                    articles[:max_articles],
                     prompts.get("summarize_system", ""),
                 ),
             })
@@ -235,13 +237,18 @@ def main():
         """
 
     # Build diversified TopN for the global summary (morning section).
-    global_summary_top_n = settings.get("limits", {}).get("global_summary_top_n", 7)
-    all_scored_articles.sort(
-        key=lambda x: (x.get("score", 0), x.get("final_dt")),
+    global_summary_top_n = settings.get("limits", {}).get("global_summary_top_n", 10)
+    summary_candidates = select_summary_articles(
+        all_scored_articles,
+        min_importance=0,
+        exclude_types=["stock"],
+    )
+    summary_candidates.sort(
+        key=lambda x: (importance_value(x), x.get("final_dt")),
         reverse=True,
     )
     diversified_articles = apply_diversity_limits_for_global_summary(
-        all_scored_articles,
+        summary_candidates,
         targets_by_label,
         global_summary_top_n,
     )
