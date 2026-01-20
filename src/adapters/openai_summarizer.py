@@ -3,10 +3,10 @@ import requests
 from src.config.env import OPENAI_API_KEY
 
 
-def summarize_with_gpt(label, articles, system_prompt):
+def summarize_with_gpt(label, summary_articles, display_articles, system_prompt):
     try:
         prompt = ""
-        for a in articles:
+        for a in summary_articles:
             prompt += f"""
 区分: {a.get("type")}
 公開日: {a.get("date")}
@@ -16,25 +16,28 @@ def summarize_with_gpt(label, articles, system_prompt):
 
 """
 
-        res = requests.post(
-            "https://api.openai.com/v1/chat/completions",
-            headers={
-                "Authorization": f"Bearer {OPENAI_API_KEY}",
-                "Content-Type": "application/json",
-            },
-            json={
-                "model": "gpt-4o-mini",
-                "messages": [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": prompt},
-                ],
-                "temperature": 0.2,
-            },
-            timeout=120,
-        )
+        if not summary_articles:
+            body = "要約対象なし（importance <= 0）"
+        else:
+            res = requests.post(
+                "https://api.openai.com/v1/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {OPENAI_API_KEY}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model": "gpt-4o-mini",
+                    "messages": [
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": prompt},
+                    ],
+                    "temperature": 0.2,
+                },
+                timeout=120,
+            )
 
-        res.raise_for_status()
-        body = res.json()["choices"][0]["message"]["content"].replace("\n", "<br>")
+            res.raise_for_status()
+            body = res.json()["choices"][0]["message"]["content"].replace("\n", "<br>")
 
         out = f"""
         <div style="
@@ -49,7 +52,7 @@ def summarize_with_gpt(label, articles, system_prompt):
             <div style="margin-bottom:14px;">{body}</div>
         """
 
-        for i, a in enumerate(articles, 1):
+        for i, a in enumerate(display_articles, 1):
             date_only = a["date"].split(" ")[0] if a.get("date") else "不明"
             out += f"""
             <div style="margin-bottom:8px;">

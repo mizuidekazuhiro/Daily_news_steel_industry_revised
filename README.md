@@ -8,6 +8,9 @@ Notion連携が有効な場合は、記事ログ・日次サマリ・検索条�
 
 - **ラベル別要約**: 1ラベルあたり最大 `max_articles_per_label` 件をGPTへ投入します（デフォルト 5 件）。
 - **朝一サマリ**: 全ラベルからスコア上位を抽出したうえで `global_summary_top_n` 件をGPTへ投入します（未設定時は 7 件）。同一ラベルの分散上限は **企業=1件 / テーマ=2件** がデフォルトで、Notion Targets の `MaxPick` で上書き可能です。
+- **要約対象の前提**:
+  - **全体ニュース要約（朝一サマリ）** は importance > 0 かつ **株価系（STOCK）は除外** した記事のみが対象です。
+  - **ラベル別要約** は importance による除外は行わず、株価系も含めて従来どおり上位件数を対象にします（importanceは順位づけに影響）。
 - **変更方法**: 件数ルールを変更したい場合は `config/settings.yml`（`max_articles_per_label`）と `main.py` の `global_summary_top_n` 参照箇所を調整してください。
 
 ## 全体像（処理フロー）
@@ -147,6 +150,109 @@ env:
 - 国タグ: `RuleType=country`、`TagName` を国名に
 - 分野タグ: `RuleType=sector`、`TagName` を分野名に
 - 重要度: `RuleType=importance` と `Weight` を設定
+
+## 重要度判定ロジック（Notion優先）
+
+- **Notion Rule DBに `RuleType=importance` が1件でも存在する場合**: 重要度は Notion ルールの Weight 合計で決定されます。
+- **Notion Rule DBに `RuleType=importance` が存在しない場合のみ**: `config/scoring.yml` の従来スコアリング（RuleBasedScorer）で重要度を算出します。
+
+## Notion Rule DB を“操作パネル”として使う運用方針
+
+重要度と要約掲載/非掲載を **Notion Rule DB だけで運用**できるように、importance ルールを次の3種類に整理して管理します。
+
+1. **Theme重要度（何の話か）**: 設備投資・脱炭素などテーマを表すルール
+2. **Event重要度（出来事の強さ）**: 大型投資発表・規制変更などイベントを表すルール
+3. **調整用ルール（ノイズ除去/抑制）**: 株価短期や一般市況など、要約から外したいノイズを抑制するルール
+
+### 要約対象の定義
+
+- **全体ニュース要約（朝一サマリ）**:
+  - importance > 0 の記事のみが対象
+  - **株価系（STOCK）は除外**
+  - 重要度が高い順に **最大10件** を投入
+- **ラベル別要約**:
+  - importance による除外は行わず、株価系も含めて対象
+  - 重要度は順位づけに反映（低めに抑えられる）
+  - いずれも記事一覧の表示/Notion保存は従来どおり継続
+
+### ルール記述の規約
+
+- **TagNameは「理由文」**として書く（例: `脱炭素（水素関連）`, `設備投資・増設`, `株価・短期値動き`）
+- **Weightは離散値のみ**で運用: `+5 / +3 / +1 / -2 / -5`（細かい数字は禁止）
+- **調整用ルールは title マッチ推奨**（本文はノイズが多いため）
+- **NegativeKeywords を活用**して誤抑制を防ぐ（例: `investment, capex, acquisition` など）
+
+### ルール例（コピペ用）
+
+**Theme例**
+```
+RuleType: importance
+TagName: 脱炭素（水素関連）
+Keywords: hydrogen, 脱炭素, 低炭素, green steel
+MatchField: both
+Weight: 3
+```
+
+```
+RuleType: importance
+TagName: 設備投資・増設
+Keywords: investment, capex, 増設, 新工場, capacity
+MatchField: both
+Weight: 3
+```
+
+**Event例**
+```
+RuleType: importance
+TagName: 大型投資発表
+Keywords: investment, capex, 〇〇億, billion, 大型投資
+MatchField: title
+Weight: 5
+```
+
+```
+RuleType: importance
+TagName: 規制・政策変更
+Keywords: regulation, policy, 規制, 政策, carbon tax, CBAM
+MatchField: title
+Weight: 3
+```
+
+```
+RuleType: importance
+TagName: 業績・決算
+Keywords: earnings, results, 決算, 業績, guidance
+MatchField: title
+Weight: 3
+```
+
+**調整例**
+```
+RuleType: importance
+TagName: 株価・短期値動き
+Keywords: stock, share, 株価, target price, 52-week
+MatchField: title
+Weight: -5
+```
+
+```
+RuleType: importance
+TagName: 市況一般
+Keywords: market sentiment, 市況, 需給, general market
+MatchField: title
+Weight: -3
+```
+
+### デバッグ方法
+
+- **ImportanceReasons の見方**: `TagName(+Weight)` の形式で理由が残ります（例: `設備投資・増設(+3); 株価・短期値動き(-5)`）。
+- **なぜ要約から消えたか**:
+  - 全体ニュース要約は importance が **0以下** の記事は対象外です。
+  - 株価系（STOCK）は全体ニュース要約から除外されます。
+- **調整用ルールが効きすぎる場合の見直し**:
+  - `MatchField` が `both` になっていないか（title推奨）
+  - `Keywords` が広すぎないか
+  - `NegativeKeywords` を追加できないか
 
 ## トラブルシュート
 
