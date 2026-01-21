@@ -205,6 +205,7 @@ def main():
                 if notion_exporter:
                     try:
                         page_id = notion_exporter.upsert_article(article)
+                        article["notion_page_id"] = page_id
                         notion_article_page_ids.append(page_id)
                         logging.info("Notion article upserted: %s", page_id)
                     except Exception:
@@ -271,7 +272,17 @@ def main():
         run_date = reference_time.astimezone(JST).date().isoformat()
         run_stats = f"articles_saved={len(notion_article_page_ids)}, total_articles={total_articles}, notion_failures={notion_failures}"
         try:
-            notion_exporter.create_daily_summary(run_date, summary_text, notion_article_page_ids, run_stats=run_stats)
+            summary_article_page_ids = [
+                article.get("notion_page_id")
+                for article in diversified_articles
+                if article.get("notion_page_id")
+            ]
+            notion_exporter.create_daily_summary(
+                run_date,
+                summary_text,
+                summary_article_page_ids,
+                run_stats=run_stats,
+            )
             logging.info("Notion daily summary created for %s", run_date)
         except Exception:
             logging.exception("Failed to create daily summary in Notion")
