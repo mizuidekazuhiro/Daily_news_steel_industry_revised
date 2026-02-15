@@ -69,3 +69,32 @@ def is_within_hours(dt, reference_time, hours=24):
     else:
         reference_time = reference_time.astimezone(timezone.utc)
     return dt >= reference_time - timedelta(hours=hours)
+
+
+def compute_lookback_window(now_jst):
+    """Return lookback window boundaries in JST.
+
+    Monday run targets previous Friday 00:00 JST to Sunday 23:59:59 JST.
+    Tuesday-Friday runs target the most recent 24 hours.
+    """
+    if now_jst.tzinfo is None:
+        now_jst = now_jst.replace(tzinfo=JST)
+    else:
+        now_jst = now_jst.astimezone(JST)
+
+    if now_jst.weekday() == 0:
+        monday_start = now_jst.replace(hour=0, minute=0, second=0, microsecond=0)
+        start = monday_start - timedelta(days=3)
+        end = monday_start - timedelta(seconds=1)
+        return start, end
+
+    return now_jst - timedelta(hours=24), now_jst
+
+
+def is_within_window(dt, start, end):
+    if not dt:
+        return False
+    dt_utc = ensure_aware_utc(dt)
+    start_utc = ensure_aware_utc(start)
+    end_utc = ensure_aware_utc(end)
+    return start_utc <= dt_utc <= end_utc

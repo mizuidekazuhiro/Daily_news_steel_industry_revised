@@ -27,9 +27,10 @@ from src.domain.time_utils import (
     now_utc,
     format_dt_jst,
     parse_publish_datetime,
-    is_within_hours,
     ensure_aware_utc,
     JST,
+    compute_lookback_window,
+    is_within_window,
 )
 from src.usecases.score_articles import apply_scores
 from src.usecases.summary_select import select_summary_articles, importance_value
@@ -87,6 +88,18 @@ def main():
     run_id = reference_time.strftime("%Y%m%dT%H%M%SZ")
     hours = settings.get("limits", {}).get("hours", 24)
     max_articles = settings.get("limits", {}).get("max_articles_per_label", 5)
+
+    run_time_jst = reference_time.astimezone(JST)
+    window_start_jst, window_end_jst = compute_lookback_window(run_time_jst)
+    weekend_mode = run_time_jst.weekday() == 0
+    logging.info(
+        "Run window (JST): start=%s end=%s weekday=%s",
+        window_start_jst.isoformat(),
+        window_end_jst.isoformat(),
+        run_time_jst.weekday(),
+    )
+    if weekend_mode:
+        logging.info("Weekend mode enabled: collecting Friday-Sunday articles")
 
     scorer = RuleBasedScorer.from_yaml()
     tag_rules = load_tag_rules()
@@ -150,15 +163,13 @@ def main():
 
             for a in search_result:
                 serper_dt = parse_publish_datetime(a.get("date"), reference_time)
-                if not is_within_hours(serper_dt, reference_time, hours=hours):
-                    continue
-
                 body, scraped_dt, body_excerpt, published_source = fetch_article(a.get("link"), reference_time)
                 if not body:
                     continue
 
                 final_dt = ensure_aware_utc(scraped_dt or serper_dt)
-                if not is_within_hours(final_dt, reference_time, hours=hours):
+                if not final_dt:
+                    logging.warning("Skipping article with missing published_at: %s", a.get("link", ""))
                     continue
 
                 if not scraped_dt:
@@ -192,6 +203,8 @@ def main():
                 google_alert_rss,
                 reference_time,
                 hours=hours,
+                window_start=window_start_jst,
+                window_end=window_end_jst,
             )
             alert_articles = dedup_alert_articles(articles, alert_articles)
             for article in alert_articles:
@@ -203,6 +216,19 @@ def main():
                 article["target_label"] = label
 
             articles.extend(alert_articles[:need])
+
+        before_window_filter = len(articles)
+        articles = [
+            article
+            for article in articles
+            if is_within_window(article.get("final_dt"), window_start_jst, window_end_jst)
+        ]
+        logging.info(
+            "Window filter label=%s before=%d after=%d",
+            label,
+            before_window_filter,
+            len(articles),
+        )
 
         apply_scores(articles, scorer, notion_rules=notion_rules)
         articles.sort(
