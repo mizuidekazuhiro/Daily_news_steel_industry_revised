@@ -34,6 +34,7 @@ from src.domain.time_utils import (
 from src.usecases.score_articles import apply_scores
 from src.usecases.summary_select import select_summary_articles, importance_value
 from src.usecases.tag_articles import apply_tags, load_tag_rules
+from src.usecases.target_coverage import build_processing_labels, summarize_target_coverage
 
 
 def apply_diversity_limits_for_global_summary(articles, targets_by_label, top_n):
@@ -70,6 +71,16 @@ def main():
     notion_config = load_notion_config()
     prompts = load_prompts()
     targets, enterprise_targets, google_alert_rss, targets_by_label = load_targets()
+    labels = build_processing_labels(targets, google_alert_rss)
+    target_stats = summarize_target_coverage(labels, targets, google_alert_rss)
+    logging.info(
+        "Targets loaded: labels=%d serper_queries=%d rss_feeds=%d rss_only=%d serper_only=%d",
+        target_stats["labels"],
+        target_stats["serper_queries"],
+        target_stats["rss_feeds"],
+        target_stats["rss_only"],
+        target_stats["serper_only"],
+    )
 
     reference_time = now_utc()
     today_str = reference_time.strftime("%Y%m%d")
@@ -128,7 +139,8 @@ def main():
     total_articles = 0
     notion_failures = 0
 
-    for label, queries in targets.items():
+    for label in labels:
+        queries = targets.get(label, [])
         articles = []
 
         for q in queries:
@@ -171,7 +183,8 @@ def main():
 
         articles.sort(key=lambda x: x["final_dt"], reverse=True)
 
-        if label in enterprise_targets and len(articles) < max_articles:
+        rss_feeds = google_alert_rss.get(label, [])
+        if rss_feeds and len(articles) < max_articles:
             need = max_articles - len(articles)
 
             alert_articles = fetch_google_alert_articles(
