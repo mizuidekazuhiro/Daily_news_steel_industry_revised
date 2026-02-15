@@ -2,7 +2,7 @@ name: Daily Steel News (Serper)
 
 on:
   schedule:
-    - cron: '49 20 * * *'   # 日本時間 6:49(翌日)
+    - cron: '49 20 * * 1-5'   # 日本時間 6:49(翌日), 月〜金のみ
   workflow_dispatch:
 
 jobs:

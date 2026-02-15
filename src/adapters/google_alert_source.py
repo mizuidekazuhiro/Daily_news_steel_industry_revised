@@ -3,7 +3,7 @@ import urllib.parse
 
 import feedparser
 
-from src.domain.time_utils import parse_publish_datetime, is_within_hours, ensure_aware_utc
+from src.domain.time_utils import parse_publish_datetime, is_within_hours, ensure_aware_utc, is_within_window
 from src.adapters.article_parser import fetch_article, classify_article, extract_source_from_url
 
 
@@ -26,7 +26,7 @@ def normalize_google_alert_url(url):
     return url
 
 
-def fetch_google_alert_articles(label, google_alert_rss, reference_time, hours=24):
+def fetch_google_alert_articles(label, google_alert_rss, reference_time, hours=24, window_start=None, window_end=None):
     articles = []
 
     rss_urls = google_alert_rss.get(label, [])
@@ -47,7 +47,10 @@ def fetch_google_alert_articles(label, google_alert_rss, reference_time, hours=2
                 continue
 
             final_dt = ensure_aware_utc(scraped_dt or published)
-            if not is_within_hours(final_dt, reference_time, hours=hours):
+            if window_start and window_end:
+                if not is_within_window(final_dt, window_start, window_end):
+                    continue
+            elif not is_within_hours(final_dt, reference_time, hours=hours):
                 continue
 
             articles.append({
