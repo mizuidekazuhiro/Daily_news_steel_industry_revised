@@ -1,8 +1,9 @@
 import re
 from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
+from zoneinfo import ZoneInfo
 
-JST = timezone(timedelta(hours=9))
+JST = ZoneInfo("Asia/Tokyo")
 
 
 def now_utc():

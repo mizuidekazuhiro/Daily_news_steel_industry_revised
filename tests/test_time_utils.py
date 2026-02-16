@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from src.domain.time_utils import JST, compute_lookback_window
 
@@ -14,6 +14,25 @@ def test_compute_lookback_window_on_monday_weekend_mode():
 
 def test_compute_lookback_window_on_tuesday_is_24_hours():
     now_jst = datetime(2026, 1, 6, 6, 49, 30, tzinfo=JST)  # Tuesday
+
+    start, end = compute_lookback_window(now_jst)
+
+    assert end == now_jst
+    assert end - start == timedelta(hours=24)
+
+
+def test_compute_lookback_window_uses_jst_weekday_even_if_input_is_utc():
+    # UTC Sunday 21:49 is JST Monday 06:49 (workflow schedule boundary)
+    now_utc = datetime(2026, 1, 4, 21, 49, tzinfo=timezone.utc)
+
+    start, end = compute_lookback_window(now_utc)
+
+    assert start == datetime(2026, 1, 2, 0, 0, 0, tzinfo=JST)  # Friday 00:00 JST
+    assert end == datetime(2026, 1, 4, 23, 59, 59, tzinfo=JST)  # Sunday 23:59:59 JST
+
+
+def test_compute_lookback_window_on_sunday_is_normal_mode():
+    now_jst = datetime(2026, 1, 4, 6, 49, tzinfo=JST)  # Sunday
 
     start, end = compute_lookback_window(now_jst)
 
