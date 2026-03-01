@@ -1,13 +1,38 @@
+import logging
 import requests
 
-from src.config.env import OPENAI_API_KEY
+logger = logging.getLogger(__name__)
 
+def _call_openai_chat(messages, model="gpt-4o-mini", temperature=0.2, timeout=120):
+    if not OPENAI_API_KEY:
+        raise RuntimeError("OPENAI_API_KEY is empty")
+
+    res = requests.post(
+        "https://api.openai.com/v1/chat/completions",
+        headers={
+            "Authorization": f"Bearer {OPENAI_API_KEY}",
+            "Content-Type": "application/json",
+        },
+        json={
+            "model": model,
+            "messages": messages,
+            "temperature": temperature,
+        },
+        timeout=timeout,
+    )
+
+    # 失敗時に内容が分かるようにする
+    if res.status_code >= 400:
+        logger.error("OpenAI API error: status=%s body=%s", res.status_code, res.text[:2000])
+
+    res.raise_for_status()
+    data = res.json()
+    return data["choices"][0]["message"]["content"]
 
 def summarize_with_gpt(label, summary_articles, display_articles, system_prompt):
-    try:
-        prompt = ""
-        for a in summary_articles:
-            prompt += f"""
+    prompt = ""
+    for a in summary_articles:
+        prompt += f"""
 区分: {a.get("type")}
 公開日: {a.get("date")}
 タイトル: {a.get("title")}
@@ -16,42 +41,28 @@ def summarize_with_gpt(label, summary_articles, display_articles, system_prompt)
 
 """
 
+    try:
         if not summary_articles:
             body = "要約対象なし（importance <= 0）"
         else:
-            res = requests.post(
-                "https://api.openai.com/v1/chat/completions",
-                headers={
-                    "Authorization": f"Bearer {OPENAI_API_KEY}",
-                    "Content-Type": "application/json",
-                },
-                json={
-                    "model": "gpt-4o-mini",
-                    "messages": [
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": prompt},
-                    ],
-                    "temperature": 0.2,
-                },
+            logger.info("summarize_with_gpt: label=%s prompt_chars=%d articles=%d",
+                        label, len(prompt), len(summary_articles))
+
+            body = _call_openai_chat(
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": prompt},
+                ],
+                model="gpt-4o-mini",
+                temperature=0.2,
                 timeout=120,
-            )
+            ).replace("\n", "<br>")
 
-            res.raise_for_status()
-            body = res.json()["choices"][0]["message"]["content"].replace("\n", "<br>")
-
-        out = f"""
-        <div style="
-            font-family:'Meiryo UI', sans-serif; 
-            line-height:1.7; 
-            padding:22px; 
-            color:#333; 
-            border-bottom:1px solid #ddd;
-        ">
-        
+        # ... out の組み立てはそのまま ...
+        out = f"""<div style="font-family:'Meiryo UI', sans-serif; line-height:1.7; padding:22px; color:#333; border-bottom:1px solid #ddd;">
             <h2 style="color:#0055a5; margin-bottom:10px;">■{label}</h2>
             <div style="margin-bottom:14px;">{body}</div>
         """
-
         for i, a in enumerate(display_articles, 1):
             date_only = a["date"].split(" ")[0] if a.get("date") else "不明"
             out += f"""
@@ -60,13 +71,12 @@ def summarize_with_gpt(label, summary_articles, display_articles, system_prompt)
                 <span style="font-size:12px; color:#666;">Published: {date_only} | Source: {a["source"]}</span>
             </div>
             """
-
         out += "</div><br>"
         return out
 
-    except requests.RequestException:
-        return f"<b> ■{label}</b><br>GPTエラー<br><br>"
-
+    except Exception as e:
+        logger.exception("summarize_with_gpt failed: label=%s prompt_chars=%d", label, len(prompt))
+        return f"<b> ■{label}</b><br>GPTエラー（{type(e).__name__}）<br><br>"
 
 def generate_morning_summary(all_articles, user_prompt):
     try:
@@ -95,22 +105,14 @@ def generate_morning_summary(all_articles, user_prompt):
 
 """
 
-        res = requests.post(
-            "https://api.openai.com/v1/chat/completions",
-            headers={
-                "Authorization": f"Bearer {OPENAI_API_KEY}",
-                "Content-Type": "application/json",
-            },
-            json={
-                "model": "gpt-4o-mini",
-                "messages": [{"role": "user", "content": prompt}],
-                "temperature": 0.3,
-            },
-            timeout=120,
-        )
+        logger.info("generate_morning_summary: prompt_chars=%d items=%d", len(prompt), len(items))
 
-        res.raise_for_status()
-        summary = res.json()["choices"][0]["message"]["content"].replace("\n", "<br>")
+        summary = _call_openai_chat(
+            messages=[{"role": "user", "content": prompt}],
+            model="gpt-4o-mini",
+            temperature=0.3,
+            timeout=120,
+        ).replace("\n", "<br>")
 
         return f"""
         <div style="font-family:'Meiryo UI', sans-serif; padding:20px; background:#f5f7fa; border:1px solid #ddd; margin-bottom:24px; color:#333;">
@@ -119,5 +121,6 @@ def generate_morning_summary(all_articles, user_prompt):
         </div>
         """
 
-    except requests.RequestException:
-        return "<b>■本日のニュースサマリ</b><br>生成できませんでした<br><br>"
+    except Exception as e:
+        logger.exception("generate_morning_summary failed: prompt_chars=%d", len(prompt) if 'prompt' in locals() else -1)
+        return f"<b>■本日のニュースサマリ</b><br>生成できませんでした（{type(e).__name__}）<br><br>"
