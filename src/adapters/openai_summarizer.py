@@ -1,7 +1,9 @@
+import os
 import logging
 import requests
 
 logger = logging.getLogger(__name__)
+OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
 
 def _call_openai_chat(messages, model="gpt-4o-mini", temperature=0.2, timeout=120):
     if not OPENAI_API_KEY:
