@@ -23,8 +23,10 @@ def _merge_notion_targets(targets, enterprise_targets, google_alert_rss, targets
     for entry in notion_targets:
         label = entry["label"]
         kind = entry["kind"]
-        if kind == "serper" and entry.get("query"):
-            targets.setdefault(label, []).append(entry["query"])
+        if kind == "serper":
+            queries = entry.get("queries") or ([entry["query"]] if entry.get("query") else [])
+            if queries:
+                targets.setdefault(label, []).extend(queries)
         if kind == "rss" and entry.get("rss"):
             google_alert_rss.setdefault(label, []).append(entry["rss"])
         if entry.get("enterprise"):
