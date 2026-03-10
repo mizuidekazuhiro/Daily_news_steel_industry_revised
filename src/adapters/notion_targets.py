@@ -15,6 +15,10 @@ def _property_text(prop):
     return ""
 
 
+def _split_serper_queries(query_text):
+    return [line.strip() for line in query_text.splitlines() if line.strip()]
+
+
 def fetch_targets_from_notion(notion_client, database_id):
     results = []
     payload = {}
@@ -42,6 +46,7 @@ def fetch_targets_from_notion(notion_client, database_id):
             if kind_prop.get("type") == "select":
                 kind = (kind_prop.get("select") or {}).get("name")
             query = _property_text(props.get("Query"))
+            queries = _split_serper_queries(query)
             rss = _property_text(props.get("RSS"))
             enterprise = False
             if props.get("Enterprise", {}).get("type") == "checkbox":
@@ -53,7 +58,7 @@ def fetch_targets_from_notion(notion_client, database_id):
             if not label or not kind:
                 skipped_missing_required += 1
                 continue
-            if kind == "serper" and not query:
+            if kind == "serper" and not queries:
                 skipped_empty_source += 1
                 continue
             if kind == "rss" and not rss:
@@ -63,6 +68,7 @@ def fetch_targets_from_notion(notion_client, database_id):
                 "label": label,
                 "kind": kind,
                 "query": query,
+                "queries": queries,
                 "rss": rss,
                 "enterprise": enterprise,
                 "max_pick": max_pick,
