@@ -91,3 +91,32 @@ def fetch_targets_from_notion(notion_client, database_id):
             skipped_empty_source,
         )
     return results
+
+
+def build_targets_map(target_entries):
+    targets = {}
+    enterprise_targets = set()
+    google_alert_rss = {}
+    targets_by_label = {}
+
+    for entry in target_entries:
+        label = entry["label"]
+        kind = entry["kind"]
+        if kind == "serper":
+            queries = entry.get("queries") or ([entry["query"]] if entry.get("query") else [])
+            if queries:
+                targets.setdefault(label, []).extend(queries)
+        if kind == "rss" and entry.get("rss"):
+            google_alert_rss.setdefault(label, []).append(entry["rss"])
+        if entry.get("enterprise"):
+            enterprise_targets.add(label)
+        targets_by_label.setdefault(label, {
+            "enterprise": False,
+            "max_pick": None,
+        })
+        if entry.get("enterprise") is not None:
+            targets_by_label[label]["enterprise"] = entry["enterprise"]
+        if entry.get("max_pick") is not None:
+            targets_by_label[label]["max_pick"] = entry["max_pick"]
+
+    return targets, enterprise_targets, google_alert_rss, targets_by_label
