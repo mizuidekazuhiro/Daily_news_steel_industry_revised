@@ -11,13 +11,12 @@ from src.adapters.google_alert_source import (
 )
 
 from src.adapters.openai_summarizer import summarize_with_gpt, generate_morning_summary
-from src.adapters.rule_based_scorer import RuleBasedScorer
 from src.adapters.serper_source import search_serper
-from src.adapters.targets_yaml import load_targets
 from src.adapters.yahoo_finance import fetch_fx_rates, generate_stock_section
 from src.adapters.notion_client import NotionClient
 from src.adapters.notion_exporter import NotionExporter
 from src.adapters.notion_rules import fetch_rules_from_notion
+from src.adapters.notion_targets import fetch_targets_from_notion, build_targets_map
 from src.adapters.notion_audit import write_audit_log
 from src.config import env
 from src.config.notion import load_notion_config
@@ -71,7 +70,26 @@ def main():
     settings = load_settings()
     notion_config = load_notion_config()
     prompts = load_prompts()
-    targets, enterprise_targets, google_alert_rss, targets_by_label = load_targets()
+    required_notion_env = {
+        "NOTION_TOKEN": "Notion APIへ接続するために必要です。",
+        "NOTION_TARGETS_DB_ID": "監視対象（Targets DB）を読み込むために必要です。",
+        "NOTION_RULES_DB_ID": "重要度ルール（Rules DB）を読み込むために必要です。",
+        "NOTION_ARTICLES_DB_ID": "記事ログを保存するために必要です。",
+        "NOTION_DAILY_DB_ID": "日次サマリを保存するために必要です。",
+    }
+    missing_notion_env = [name for name in required_notion_env if not getattr(env, name)]
+    if missing_notion_env:
+        details = "\n".join(f"- {name}: {required_notion_env[name]}" for name in missing_notion_env)
+        raise RuntimeError(
+            "Notion連携に必要な環境変数が不足しています。以下を設定してください。\n"
+            f"{details}"
+        )
+
+    notion_client = NotionClient(env.NOTION_TOKEN)
+    logging.info("Notion integration enabled")
+
+    target_entries = fetch_targets_from_notion(notion_client, env.NOTION_TARGETS_DB_ID)
+    targets, _, google_alert_rss, targets_by_label = build_targets_map(target_entries)
     labels = build_processing_labels(targets, google_alert_rss)
     target_stats = summarize_target_coverage(labels, targets, google_alert_rss)
     logging.info(
@@ -101,42 +119,25 @@ def main():
     if weekend_mode:
         logging.info("Weekend mode enabled: collecting Friday-Sunday articles")
 
-    scorer = RuleBasedScorer.from_yaml()
     tag_rules = load_tag_rules()
     notion_rules = []
     notion_exporter = None
-    notion_client = None
-    if env.NOTION_TOKEN:
-        notion_client = NotionClient(env.NOTION_TOKEN)
-        logging.info("Notion integration enabled: token found")
-    else:
-        logging.info("Notion integration disabled: NOTION_TOKEN is missing")
-    if notion_client and env.NOTION_RULES_DB_ID:
-        try:
-            notion_rules = fetch_rules_from_notion(notion_client, env.NOTION_RULES_DB_ID)
-        except Exception as exc:
-            write_audit_log(
-                {"run_id": run_id, "url": "", "step": "fetch_rules_failed", "error": str(exc)},
-            )
-            logging.exception("Failed to load Notion rules")
-    elif notion_client:
-        logging.info("Notion rules disabled: NOTION_RULES_DB_ID is missing")
-    if notion_client and env.NOTION_ARTICLES_DB_ID and env.NOTION_DAILY_DB_ID:
-        notion_exporter = NotionExporter(
-            notion_client,
-            env.NOTION_ARTICLES_DB_ID,
-            env.NOTION_DAILY_DB_ID,
-            run_id,
-            notion_config=notion_config,
+    try:
+        notion_rules = fetch_rules_from_notion(notion_client, env.NOTION_RULES_DB_ID)
+    except Exception as exc:
+        write_audit_log(
+            {"run_id": run_id, "url": "", "step": "fetch_rules_failed", "error": str(exc)},
         )
-        logging.info("Notion exporter configured for articles and daily summary")
-    elif notion_client:
-        missing = []
-        if not env.NOTION_ARTICLES_DB_ID:
-            missing.append("NOTION_ARTICLES_DB_ID")
-        if not env.NOTION_DAILY_DB_ID:
-            missing.append("NOTION_DAILY_DB_ID")
-        logging.info("Notion exporter disabled: missing %s", ", ".join(missing))
+        logging.exception("Failed to load Notion rules")
+
+    notion_exporter = NotionExporter(
+        notion_client,
+        env.NOTION_ARTICLES_DB_ID,
+        env.NOTION_DAILY_DB_ID,
+        run_id,
+        notion_config=notion_config,
+    )
+    logging.info("Notion exporter configured for articles and daily summary")
 
     fetch_fx_rates()
     notice_html = """
@@ -230,7 +231,7 @@ def main():
             len(articles),
         )
 
-        apply_scores(articles, scorer, notion_rules=notion_rules)
+        apply_scores(articles, notion_rules=notion_rules)
         articles.sort(
             key=lambda x: (x.get("score", 0), x["final_dt"]),
             reverse=True,

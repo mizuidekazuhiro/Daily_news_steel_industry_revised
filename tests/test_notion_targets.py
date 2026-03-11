@@ -1,5 +1,8 @@
-from src.adapters.notion_targets import _split_serper_queries, fetch_targets_from_notion
-from src.adapters.targets_yaml import _merge_notion_targets
+from src.adapters.notion_targets import (
+    _split_serper_queries,
+    fetch_targets_from_notion,
+    build_targets_map,
+)
 
 
 class StubNotionClient:
@@ -56,25 +59,20 @@ def test_fetch_targets_from_notion_skips_empty_query_after_split():
     assert result == []
 
 
-def test_merge_notion_targets_extends_queries_for_same_label(monkeypatch):
-    monkeypatch.setattr("src.adapters.targets_yaml.env.NOTION_TOKEN", "token")
-    monkeypatch.setattr("src.adapters.targets_yaml.env.NOTION_TARGETS_DB_ID", "db")
-    monkeypatch.setattr("src.adapters.targets_yaml.NotionClient", lambda token: object())
-    monkeypatch.setattr(
-        "src.adapters.targets_yaml.fetch_targets_from_notion",
-        lambda client, db_id: [
-            {
-                "label": "日本製鉄",
-                "kind": "serper",
-                "query": '日本製鉄\n"Nippon Steel"',
-                "queries": ["日本製鉄", '"Nippon Steel"'],
-                "rss": "",
-                "enterprise": False,
-                "max_pick": None,
-            }
-        ],
-    )
-
-    targets, _, _, _ = _merge_notion_targets({}, set(), {}, {})
+def test_build_targets_map_extends_queries_for_same_label():
+    targets, enterprise_targets, google_alert_rss, targets_by_label = build_targets_map([
+        {
+            "label": "日本製鉄",
+            "kind": "serper",
+            "query": '日本製鉄\n"Nippon Steel"',
+            "queries": ["日本製鉄", '"Nippon Steel"'],
+            "rss": "",
+            "enterprise": True,
+            "max_pick": 1,
+        }
+    ])
 
     assert targets == {"日本製鉄": ["日本製鉄", '"Nippon Steel"']}
+    assert enterprise_targets == {"日本製鉄"}
+    assert google_alert_rss == {}
+    assert targets_by_label == {"日本製鉄": {"enterprise": True, "max_pick": 1}}
