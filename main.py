@@ -22,6 +22,7 @@ from src.config import env
 from src.config.notion import load_notion_config
 from src.config.prompts import load_prompts
 from src.config.settings import load_settings
+from src.domain.article_dedup import deduplicate_articles, filter_negative_importance_articles
 from src.domain.time_utils import (
     now_utc,
     format_dt_jst,
@@ -232,14 +233,50 @@ def main():
         )
 
         apply_scores(articles, notion_rules=notion_rules)
-        articles.sort(
-            key=lambda x: (x.get("score", 0), x["final_dt"]),
+        deduped_articles, dedup_stats = deduplicate_articles(articles)
+        all_articles_for_storage = deduped_articles
+        articles_for_summary, removed_negative = filter_negative_importance_articles(deduped_articles)
+
+        all_articles_for_storage.sort(
+            key=lambda x: (x.get("score", 0), x.get("final_dt")),
+            reverse=True,
+        )
+        articles_for_summary.sort(
+            key=lambda x: (x.get("score", 0), x.get("final_dt")),
             reverse=True,
         )
 
-        if articles:
-            all_scored_articles.extend(articles)
-            for article in articles:
+        logging.info(
+            "Label filter stats label=%s before_dedup_count=%d after_dedup_count=%d removed_by_normalized_url=%d removed_by_normalized_title=%d removed_by_body_similarity=%d removed_by_negative_importance=%d summary_candidate_count_after_filters=%d",
+            label,
+            dedup_stats["before_dedup_count"],
+            dedup_stats["after_dedup_count"],
+            dedup_stats["removed_by_normalized_url"],
+            dedup_stats["removed_by_normalized_title"],
+            dedup_stats["removed_by_body_similarity"],
+            len(removed_negative),
+            len(articles_for_summary),
+        )
+        if dedup_stats.get("merge_details"):
+            for detail in dedup_stats["merge_details"]:
+                logging.debug(
+                    "Dedup merged label=%s reason=%s removed=%s kept=%s",
+                    label,
+                    detail.get("reason"),
+                    detail.get("removed_title"),
+                    detail.get("kept_title"),
+                )
+        if removed_negative:
+            for article in removed_negative:
+                logging.debug(
+                    "Filtered negative importance label=%s title=%s",
+                    label,
+                    article.get("title", ""),
+                )
+
+        if all_articles_for_storage:
+            all_scored_articles.extend(articles_for_summary)
+            for article in all_articles_for_storage:
                 article["label"] = label
                 apply_tags(article, tag_rules, notion_rules=notion_rules)
                 if notion_exporter:
@@ -251,17 +288,20 @@ def main():
                     except Exception:
                         notion_failures += 1
                         logging.exception("Failed to export article to Notion: %s", article.get("url"))
-            sections.append({
-                "label": label,
-                "score": articles[0].get("score", 0),
-                "html": summarize_with_gpt(
-                    label,
-                    articles[:max_articles],
-                    articles[:max_articles],
-                    prompts.get("summarize_system", ""),
-                ),
-            })
-            total_articles += len(articles[:max_articles])
+            if articles_for_summary:
+                sections.append({
+                    "label": label,
+                    "score": articles_for_summary[0].get("score", 0),
+                    "html": summarize_with_gpt(
+                        label,
+                        articles_for_summary[:max_articles],
+                        articles_for_summary[:max_articles],
+                        prompts.get("summarize_system", ""),
+                    ),
+                })
+                total_articles += len(articles_for_summary[:max_articles])
+            else:
+                no_article_labels.append(label)
         else:
             no_article_labels.append(label)
 
