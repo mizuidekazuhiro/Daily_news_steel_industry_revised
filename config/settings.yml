@@ -5,3 +5,21 @@ sources:
 limits:
   hours: 24
   max_articles_per_label: 5
+  global_summary_top_n: 12
+
+openai:
+  label_summary:
+    model: gpt-4o-mini
+    temperature: 0.2
+    reasoning_effort: low
+    verbosity: low
+    max_output_tokens: 1200
+    timeout: 120
+
+  morning_summary:
+    model: gpt-5-mini
+    temperature: 0.2
+    reasoning_effort: medium
+    verbosity: medium
+    max_output_tokens: 2200
+    timeout: 180

@@ -107,6 +107,9 @@ def main():
     run_id = reference_time.strftime("%Y%m%dT%H%M%SZ")
     hours = settings.get("limits", {}).get("hours", 24)
     max_articles = settings.get("limits", {}).get("max_articles_per_label", 5)
+    openai_settings = settings.get("openai", {})
+    label_openai_settings = openai_settings.get("label_summary", {})
+    morning_openai_settings = openai_settings.get("morning_summary", {})
 
     run_time_jst = reference_time.astimezone(JST)
     window_start_jst, window_end_jst = compute_lookback_window(run_time_jst)
@@ -297,6 +300,7 @@ def main():
                         articles_for_summary[:max_articles],
                         articles_for_summary[:max_articles],
                         prompts.get("summarize_system", ""),
+                        label_openai_settings,
                     ),
                 })
                 total_articles += len(articles_for_summary[:max_articles])
@@ -318,7 +322,7 @@ def main():
         """
 
     # Build diversified TopN for the global summary (morning section).
-    global_summary_top_n = settings.get("limits", {}).get("global_summary_top_n", 10)
+    global_summary_top_n = settings.get("limits", {}).get("global_summary_top_n", 12)
     summary_candidates = select_summary_articles(
         all_scored_articles,
         min_importance=0,
@@ -333,9 +337,16 @@ def main():
         targets_by_label,
         global_summary_top_n,
     )
+    logging.info(
+        "Global summary selection: global_summary_top_n=%d candidates=%d diversified=%d",
+        global_summary_top_n,
+        len(summary_candidates),
+        len(diversified_articles),
+    )
     morning_summary_html = generate_morning_summary(
         diversified_articles,
         prompts.get("morning_summary_user", ""),
+        morning_openai_settings,
     )
     final_html = (
         notice_html
