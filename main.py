@@ -335,10 +335,10 @@ def main():
         articles_for_summary = sort_for_summary(articles_for_summary)
         negative_included_count = sum(1 for a in articles_for_summary if importance_value(a) < 0)
         target_max_pick = (targets_by_label.get(label, {}) or {}).get("max_pick")
-        label_pick_limit = int(target_max_pick or max_articles or 5)
+        label_pick_limit = int(max_articles or 5)
 
         logging.info(
-            "Label filter stats label=%s before_dedup_count=%d after_dedup_count=%d removed_by_normalized_url=%d removed_by_normalized_title=%d removed_by_body_similarity=%d hard_excluded_count=%d negative_score_included_count=%d summary_candidate_count=%d selected_for_label_summary_count=%d selected_titles=%s selected_scores=%s selected_urls=%s hard_exclusion_reasons=%s",
+            "Label filter stats label=%s before_dedup_count=%d after_dedup_count=%d removed_by_normalized_url=%d removed_by_normalized_title=%d removed_by_body_similarity=%d hard_excluded_count=%d negative_score_included_count=%d summary_candidate_count=%d selected_for_label_summary_count=%d label_pick_limit=%d target_max_pick=%s max_articles_per_label=%d selected_titles=%s selected_scores=%s selected_urls=%s hard_exclusion_reasons=%s",
             label,
             dedup_stats["before_dedup_count"],
             dedup_stats["after_dedup_count"],
@@ -349,6 +349,9 @@ def main():
             negative_included_count,
             len(articles_for_summary),
             len(articles_for_summary[:label_pick_limit]),
+            label_pick_limit,
+            target_max_pick,
+            int(max_articles or 5),
             [a.get("title", "") for a in articles_for_summary[:label_pick_limit]],
             [importance_value(a) for a in articles_for_summary[:label_pick_limit]],
             [a.get("url", "") for a in articles_for_summary[:label_pick_limit]],

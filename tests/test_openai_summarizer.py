@@ -125,3 +125,20 @@ def test_responses_api_extracts_output_content_output_text(monkeypatch):
     out = openai_summarizer._call_openai_responses(input_text="x")
 
     assert out == "from_output_content"
+
+
+def test_generate_morning_summary_prompt_contains_article_ids(monkeypatch):
+    captured = {}
+
+    def fake_call_openai(**kwargs):
+        captured["prompt"] = kwargs["prompt"]
+        return "【根拠記事】\n- A1"
+
+    monkeypatch.setattr(openai_summarizer, "_call_openai", fake_call_openai)
+
+    openai_summarizer.generate_morning_summary(
+        [{"title": "t1", "body": "b", "type": "business", "url": "https://e.com", "source": "s", "date": "2026-01-01"}],
+        "prompt",
+    )
+
+    assert "記事ID: A1" in captured["prompt"]
