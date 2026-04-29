@@ -21,7 +21,8 @@ def test_normalize_removes_duplicate_header():
     text = "■ 本日の事業ブリーフ\n【結論】\nA"
     normalized = openai_summarizer.normalize_morning_summary_text(text)
     html = openai_summarizer.render_morning_summary_html(normalized)
-    assert html.count("■ 本日の事業ブリーフ") == 1
+    assert html.count("■ 朝一サマリー") == 1
+    assert "■ 本日の事業ブリーフ" not in html
 
 
 def test_render_structures_sections_topics_and_labels():
@@ -65,3 +66,30 @@ def test_call_openai_responses_raises_on_incomplete(monkeypatch):
     with pytest.raises(RuntimeError):
         openai_summarizer._call_openai_responses(input_text="x", max_output_tokens=100)
     assert calls["n"] == 2
+
+
+def test_render_reference_articles_and_ignore_gpt_reference_section():
+    summary = """【結論】
+- 事実：a
+〖根拠記事〗
+- GPT記事"""
+    refs = [
+        {"title": "記事A", "url": "https://example.com/a", "source": "SourceA"},
+        {"title": "記事B", "source": "SourceB"},
+    ]
+    html = openai_summarizer.render_morning_summary_html(summary, reference_articles=refs)
+    assert 'href="https://example.com/a"' in html
+    assert 'target="_blank"' in html and 'rel="noopener noreferrer"' in html
+    assert '記事B' in html
+    assert html.count('〖根拠記事〗') == 1
+    assert 'GPT記事' not in html
+
+
+def test_render_strips_bullets_for_generic_lines():
+    summary = """【重要トピック】
+1. 見出し
+- 海上輸送：VLCC通航制約が続いている
+"""
+    html = openai_summarizer.render_morning_summary_html(summary)
+    assert '- 海上輸送：' not in html
+    assert '海上輸送：VLCC通航制約が続いている' in html

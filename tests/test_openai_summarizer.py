@@ -69,7 +69,7 @@ def test_morning_summary_default_model_is_gpt5mini(monkeypatch):
 
     html = openai_summarizer.generate_morning_summary([], "prompt")
 
-    assert "本日の事業ブリーフ" in html
+    assert "朝一サマリー" in html
     assert captured["model"] == "gpt-5-mini"
 
 
