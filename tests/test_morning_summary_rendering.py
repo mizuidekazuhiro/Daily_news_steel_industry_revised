@@ -47,6 +47,21 @@ def test_render_escapes_html_chars():
     assert "a &lt; b" in html
 
 
+def test_sanitize_bullet_text():
+    assert openai_summarizer.sanitize_bullet_text("・ - 日本向け原油") == "日本向け原油"
+    assert openai_summarizer.sanitize_bullet_text("• - Oil tankers") == "Oil tankers"
+    assert openai_summarizer.sanitize_bullet_text("- ・ 韓国・台湾") == "韓国・台湾"
+
+
+def test_evidence_articles_are_linked():
+    summary = "【根拠記事】\n- Oil rises"
+    html = openai_summarizer.render_morning_summary_html(
+        summary,
+        source_articles=[{"title": "Oil rises", "url": "https://example.com/a", "source": "Reuters"}],
+    )
+    assert '<a href="https://example.com/a">Oil rises</a>（Reuters）' in html
+
+
 def test_call_openai_responses_raises_on_incomplete(monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
     calls = {"n": 0}
