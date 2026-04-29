@@ -104,6 +104,13 @@ def _extract_usage(data):
     return usage if isinstance(usage, dict) else None
 
 
+def _extract_reasoning_tokens(usage):
+    if not isinstance(usage, dict):
+        return 0
+    details = usage.get("output_tokens_details") or {}
+    return int(details.get("reasoning_tokens") or 0)
+
+
 def _call_openai_chat(messages, model="gpt-4o-mini", temperature=0.2, timeout=120):
     api_key = _get_openai_api_key()
     if not api_key:
@@ -125,10 +132,13 @@ def _call_openai_chat(messages, model="gpt-4o-mini", temperature=0.2, timeout=12
 def _extract_responses_text(data):
     if data.get("output_text"):
         return data["output_text"]
-    for out in data.get("output", []):
-        for content in out.get("content", []):
+    parts = []
+    for out in data.get("output", []) or []:
+        for content in out.get("content", []) or []:
             if content.get("type") == "output_text" and content.get("text"):
-                return content["text"]
+                parts.append(content["text"])
+    if parts:
+        return "\n".join(parts)
     return None
 
 
@@ -137,7 +147,9 @@ def _call_openai_responses(input_text, model="gpt-5-mini", reasoning_effort="med
     if not api_key:
         raise RuntimeError("OPENAI_API_KEY is empty")
     retry = 0
+    original_reasoning_effort = reasoning_effort
     current_max_output_tokens = max_output_tokens
+    current_reasoning_effort = reasoning_effort
     while retry <= 1:
         res = requests.post(
             "https://api.openai.com/v1/responses",
@@ -145,7 +157,7 @@ def _call_openai_responses(input_text, model="gpt-5-mini", reasoning_effort="med
             json={
                 "model": model,
                 "input": input_text,
-                "reasoning": {"effort": reasoning_effort},
+                "reasoning": {"effort": current_reasoning_effort},
                 "text": {"verbosity": verbosity},
                 "max_output_tokens": current_max_output_tokens,
             },
@@ -159,7 +171,7 @@ def _call_openai_responses(input_text, model="gpt-5-mini", reasoning_effort="med
         logger.info("OpenAI API success: api=responses usage=%s", usage)
         if usage and current_max_output_tokens:
             output_tokens = int(usage.get("output_tokens") or 0)
-            reasoning_tokens = int(usage.get("reasoning_tokens") or 0)
+            reasoning_tokens = _extract_reasoning_tokens(usage)
             if output_tokens >= int(current_max_output_tokens * 0.95):
                 logger.warning(
                     "OpenAI Responses output near max_output_tokens: model=%s output_tokens=%d reasoning_tokens=%d max_output_tokens=%d prompt_chars=%s",
@@ -170,18 +182,34 @@ def _call_openai_responses(input_text, model="gpt-5-mini", reasoning_effort="med
                     prompt_chars,
                 )
         output_text = _extract_responses_text(data) or ""
+        incomplete_details = data.get("incomplete_details") or {}
+        incomplete_reason = incomplete_details.get("reason")
         if data.get("status") == "incomplete" or data.get("incomplete_details"):
             logger.error(
                 "OpenAI responses incomplete: model=%s incomplete_details=%s usage=%s output_head=%s",
                 model,
-                data.get("incomplete_details"),
+                incomplete_details,
                 usage,
                 output_text[:400],
             )
+            if incomplete_reason != "max_output_tokens":
+                raise RuntimeError("Morning summary generation failed due to incomplete response")
             retry += 1
             if retry > 1:
                 raise RuntimeError("Morning summary generation failed due to incomplete response")
-            current_max_output_tokens = min(current_max_output_tokens * 2, 6000)
+            retry_max_output_tokens = min(current_max_output_tokens * 2, 6000)
+            retry_reasoning_effort = "low"
+            logger.warning(
+                "Retrying OpenAI responses due to incomplete response: model=%s original_reasoning_effort=%s retry_reasoning_effort=%s original_max_output_tokens=%d retry_max_output_tokens=%d incomplete_reason=%s",
+                model,
+                original_reasoning_effort,
+                retry_reasoning_effort,
+                current_max_output_tokens,
+                retry_max_output_tokens,
+                incomplete_reason,
+            )
+            current_reasoning_effort = retry_reasoning_effort
+            current_max_output_tokens = retry_max_output_tokens
             continue
         if output_text:
             return output_text
