@@ -346,3 +346,48 @@ python main.py
 - `NOTION_DAILY_DB_ID`
 
 まず GitHub Actions の Secrets もしくはローカル環境変数を確認してください。
+
+## daily_news_general(main job) のOpenAI設定
+
+main job では、**タイトル翻訳**と**本日の事業ブリーフ生成**を分離して設定します。
+
+- タイトル翻訳モデル: `OPENAI_TRANSLATION_MODEL`（推奨: `gpt-4o-mini`）
+- 事業ブリーフモデル: `OPENAI_BRIEF_MODEL`（推奨: `gpt-5-mini`）
+- `OPENAI_BRIEF_ENABLED=false` の場合は、従来通り記事一覧のみを配信します。
+
+### main job 用の環境変数例
+
+```bash
+OPENAI_API_KEY=
+OPENAI_TRANSLATION_MODEL=gpt-4o-mini
+OPENAI_MODEL=gpt-4o-mini
+OPENAI_MAX_OUTPUT_TOKENS=512
+OPENAI_TRANSLATION_BATCH_SIZE=30
+OPENAI_RESPONSE_TRUNCATE_CHARS=500
+TITLE_TRANSLATION_CACHE_PATH=data/title_translation_cache.json
+
+OPENAI_BRIEF_ENABLED=true
+OPENAI_BRIEF_MODEL=gpt-5-mini
+OPENAI_BRIEF_REASONING_EFFORT=medium
+OPENAI_BRIEF_VERBOSITY=medium
+OPENAI_BRIEF_MAX_OUTPUT_TOKENS=2200
+OPENAI_BRIEF_TOP_N=12
+OPENAI_BRIEF_PROMPT_PATH=config/prompts/main_news_brief_ja.txt
+```
+
+### GitHub Secrets / Variables 設定例
+
+- Secrets
+  - `OPENAI_API_KEY`
+- Variables
+  - `OPENAI_TRANSLATION_MODEL`
+  - `OPENAI_MAX_OUTPUT_TOKENS`
+  - `OPENAI_TRANSLATION_BATCH_SIZE`
+  - `OPENAI_RESPONSE_TRUNCATE_CHARS`
+  - `OPENAI_BRIEF_ENABLED`
+  - `OPENAI_BRIEF_MODEL`
+  - `OPENAI_BRIEF_REASONING_EFFORT`
+  - `OPENAI_BRIEF_VERBOSITY`
+  - `OPENAI_BRIEF_MAX_OUTPUT_TOKENS`
+  - `OPENAI_BRIEF_TOP_N`
+  - `OPENAI_BRIEF_PROMPT_PATH`
