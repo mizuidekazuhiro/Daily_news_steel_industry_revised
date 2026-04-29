@@ -1,5 +1,6 @@
-import os
 import logging
+import os
+
 import requests
 
 logger = logging.getLogger(__name__)
@@ -7,6 +8,7 @@ logger = logging.getLogger(__name__)
 
 def _get_openai_api_key():
     return os.environ.get("OPENAI_API_KEY", "")
+
 
 def _is_gpt5_model(model):
     return str(model or "").startswith("gpt-5")
@@ -21,49 +23,27 @@ def _call_openai_chat(messages, model="gpt-4o-mini", temperature=0.2, timeout=12
     api_key = _get_openai_api_key()
     if not api_key:
         raise RuntimeError("OPENAI_API_KEY is empty")
-
     res = requests.post(
         "https://api.openai.com/v1/chat/completions",
-        headers={
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-        },
-        json={
-            "model": model,
-            "messages": messages,
-            "temperature": temperature,
-        },
+        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+        json={"model": model, "messages": messages, "temperature": temperature},
         timeout=timeout,
     )
-
-    # 失敗時に内容が分かるようにする
     if res.status_code >= 400:
-        logger.error("OpenAI API error: status=%s body=%s", res.status_code, res.text[:2000])
-
+        logger.error("OpenAI API failed: api=chat status=%s model=%s body=%s", res.status_code, model, res.text[:2000])
     res.raise_for_status()
     data = res.json()
-    logger.info("OpenAI usage(chat): %s", _extract_usage(data))
+    logger.info("OpenAI API success: api=chat usage=%s", _extract_usage(data))
     return data["choices"][0]["message"]["content"]
 
 
-def _call_openai_responses(
-    input_text,
-    model="gpt-5.4-mini",
-    reasoning_effort="medium",
-    verbosity="medium",
-    max_output_tokens=2200,
-    timeout=120,
-):
+def _call_openai_responses(input_text, model="gpt-5-mini", reasoning_effort="medium", verbosity="medium", max_output_tokens=2200, timeout=180):
     api_key = _get_openai_api_key()
     if not api_key:
         raise RuntimeError("OPENAI_API_KEY is empty")
-
     res = requests.post(
         "https://api.openai.com/v1/responses",
-        headers={
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-        },
+        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
         json={
             "model": model,
             "input": input_text,
@@ -73,143 +53,78 @@ def _call_openai_responses(
         },
         timeout=timeout,
     )
-
     if res.status_code >= 400:
-        logger.error("OpenAI API error: status=%s body=%s", res.status_code, res.text[:2000])
-
+        logger.error("OpenAI API failed: api=responses status=%s model=%s body=%s", res.status_code, model, res.text[:2000])
     res.raise_for_status()
     data = res.json()
-    logger.info("OpenAI usage(responses): %s", _extract_usage(data))
-
-    output_text = data.get("output_text")
-    if output_text:
-        return output_text
-
-    for output_item in data.get("output", []):
-        for content_item in output_item.get("content", []):
-            if content_item.get("type") == "output_text" and content_item.get("text"):
-                return content_item["text"]
-
+    logger.info("OpenAI API success: api=responses usage=%s", _extract_usage(data))
+    if data.get("output_text"):
+        return data["output_text"]
+    for out in data.get("output", []):
+        for content in out.get("content", []):
+            if content.get("type") == "output_text" and content.get("text"):
+                return content["text"]
     raise RuntimeError("Responses API output text not found")
 
 
-def _call_openai(
-    *,
-    model,
-    prompt,
-    system_prompt=None,
-    temperature=0.2,
-    reasoning_effort="low",
-    verbosity="low",
-    max_output_tokens=1200,
-    timeout=120,
-):
+def _call_openai(*, model, prompt, system_prompt=None, temperature=0.2, reasoning_effort="low", verbosity="low", max_output_tokens=1200, timeout=120):
     if _is_gpt5_model(model):
-        logger.info(
-            "Using responses API for GPT-5 model: model=%s reasoning_effort=%s verbosity=%s",
-            model,
-            reasoning_effort,
-            verbosity,
-        )
-        input_text = prompt
-        if system_prompt:
-            input_text = f"{system_prompt}\n\n{prompt}"
-        return _call_openai_responses(
-            input_text=input_text,
-            model=model,
-            reasoning_effort=reasoning_effort,
-            verbosity=verbosity,
-            max_output_tokens=max_output_tokens,
-            timeout=timeout,
-        )
-
+        input_text = f"{system_prompt}\n\n{prompt}" if system_prompt else prompt
+        return _call_openai_responses(input_text=input_text, model=model, reasoning_effort=reasoning_effort, verbosity=verbosity, max_output_tokens=max_output_tokens, timeout=timeout)
     messages = [{"role": "user", "content": prompt}]
     if system_prompt:
-        messages = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": prompt},
-        ]
-    return _call_openai_chat(
-        messages=messages,
-        model=model,
-        temperature=temperature,
-        timeout=timeout,
-    )
+        messages = [{"role": "system", "content": system_prompt}, {"role": "user", "content": prompt}]
+    return _call_openai_chat(messages=messages, model=model, temperature=temperature, timeout=timeout)
 
-def summarize_with_gpt(label, summary_articles, display_articles, system_prompt):
-    model = os.environ.get("OPENAI_LABEL_SUMMARY_MODEL", "gpt-4o-mini")
-    temperature = float(os.environ.get("OPENAI_LABEL_SUMMARY_TEMPERATURE", "0.2"))
-    reasoning_effort = os.environ.get("OPENAI_LABEL_SUMMARY_REASONING_EFFORT", "low")
-    verbosity = os.environ.get("OPENAI_LABEL_SUMMARY_VERBOSITY", "low")
-    max_output_tokens = int(os.environ.get("OPENAI_LABEL_SUMMARY_MAX_OUTPUT_TOKENS", "1200"))
+
+def _article_value(article, *keys, default=""):
+    for key in keys:
+        value = article.get(key)
+        if value not in (None, "", []):
+            return value
+    return default
+
+
+def summarize_with_gpt(label, summary_articles, display_articles, system_prompt, openai_settings=None):
+    conf = openai_settings or {}
+    model = conf.get("model", "gpt-4o-mini")
+    temperature = float(conf.get("temperature", 0.2))
+    reasoning_effort = conf.get("reasoning_effort", "low")
+    verbosity = conf.get("verbosity", "low")
+    max_output_tokens = int(conf.get("max_output_tokens", 1200))
+    timeout = int(conf.get("timeout", 120))
 
     prompt = ""
     for a in summary_articles:
-        prompt += f"""
-区分: {a.get("type")}
-公開日: {a.get("date")}
-タイトル: {a.get("title")}
-本文:
-{a.get("body")}
-
-"""
-
+        prompt += f"\n区分: {a.get('type')}\n公開日: {a.get('date')}\nタイトル: {a.get('title')}\n本文:\n{a.get('body')}\n\n"
     try:
         if not summary_articles:
             body = "要約対象なし（importance <= 0）"
         else:
-            logger.info(
-                "summarize_with_gpt: label=%s prompt_chars=%d input article count=%d label summary model=%s reasoning_effort=%s verbosity=%s",
-                label,
-                len(prompt),
-                len(summary_articles),
-                model,
-                reasoning_effort,
-                verbosity,
-            )
-
-            body = _call_openai(
-                model=model,
-                prompt=prompt,
-                system_prompt=system_prompt,
-                temperature=temperature,
-                reasoning_effort=reasoning_effort,
-                verbosity=verbosity,
-                max_output_tokens=max_output_tokens,
-                timeout=120,
-            ).replace("\n", "<br>")
-
-        # ... out の組み立てはそのまま ...
-        out = f"""<div style="font-family:'Meiryo UI', sans-serif; line-height:1.7; padding:22px; color:#333; border-bottom:1px solid #ddd;">
-            <h2 style="color:#0055a5; margin-bottom:10px;">■{label}</h2>
-            <div style="margin-bottom:14px;">{body}</div>
-        """
+            logger.info("summarize_with_gpt: label=%s model=%s prompt_chars=%d input article count=%d reasoning_effort=%s verbosity=%s max_output_tokens=%d", label, model, len(prompt), len(summary_articles), reasoning_effort, verbosity, max_output_tokens)
+            body = _call_openai(model=model, prompt=prompt, system_prompt=system_prompt, temperature=temperature, reasoning_effort=reasoning_effort, verbosity=verbosity, max_output_tokens=max_output_tokens, timeout=timeout).replace("\n", "<br>")
+        out = f"""<div style=\"font-family:'Meiryo UI', sans-serif; line-height:1.7; padding:22px; color:#333; border-bottom:1px solid #ddd;\">\n            <h2 style=\"color:#0055a5; margin-bottom:10px;\">■{label}</h2>\n            <div style=\"margin-bottom:14px;\">{body}</div>\n        """
         for i, a in enumerate(display_articles, 1):
             date_only = a["date"].split(" ")[0] if a.get("date") else "不明"
-            out += f"""
-            <div style="margin-bottom:8px;">
-                <strong>{i}.</strong> <a href="{a["url"]}">{a["title"]}</a><br>
-                <span style="font-size:12px; color:#666;">Published: {date_only} | Source: {a["source"]}</span>
-            </div>
-            """
-        out += "</div><br>"
-        return out
-
+            out += f"""\n            <div style=\"margin-bottom:8px;\">\n                <strong>{i}.</strong> <a href=\"{a['url']}\">{a['title']}</a><br>\n                <span style=\"font-size:12px; color:#666;\">Published: {date_only} | Source: {a['source']}</span>\n            </div>\n            """
+        return out + "</div><br>"
     except Exception as e:
         logger.exception("summarize_with_gpt failed: label=%s prompt_chars=%d", label, len(prompt))
         return f"<b> ■{label}</b><br>GPTエラー（{type(e).__name__}）<br><br>"
 
-def generate_morning_summary(all_articles, user_prompt):
-    try:
-        model = os.environ.get("OPENAI_MORNING_SUMMARY_MODEL", "gpt-5.4-mini")
-        temperature = float(os.environ.get("OPENAI_MORNING_SUMMARY_TEMPERATURE", "0.2"))
-        reasoning_effort = os.environ.get("OPENAI_MORNING_SUMMARY_REASONING_EFFORT", "medium")
-        verbosity = os.environ.get("OPENAI_MORNING_SUMMARY_VERBOSITY", "medium")
-        max_output_tokens = int(os.environ.get("OPENAI_MORNING_SUMMARY_MAX_OUTPUT_TOKENS", "2200"))
-        prompt = user_prompt + "\n"
 
+def generate_morning_summary(all_articles, user_prompt, openai_settings=None):
+    conf = openai_settings or {}
+    model = conf.get("model", "gpt-5-mini")
+    temperature = float(conf.get("temperature", 0.2))
+    reasoning_effort = conf.get("reasoning_effort", "medium")
+    verbosity = conf.get("verbosity", "medium")
+    max_output_tokens = int(conf.get("max_output_tokens", 2200))
+    timeout = int(conf.get("timeout", 180))
+    prompt = user_prompt + "\n"
+    try:
+        items = []
         if isinstance(all_articles, dict):
-            items = []
             for label, articles in all_articles.items():
                 for article in articles:
                     copied = dict(article)
@@ -218,53 +133,36 @@ def generate_morning_summary(all_articles, user_prompt):
         else:
             items = list(all_articles or [])
 
+        prompt_count = 0
         for article in items:
-            if article.get("type") == "STOCK":
+            if str(article.get("type", "")).lower() == "stock":
                 continue
-            label = article.get("label") or article.get("target_label", "")
+            prompt_count += 1
+            label = _article_value(article, "label", "target_label")
             prompt += f"""
 会社/テーマ: {label}
-区分: {article.get("type")}
-重要度スコア: {article.get("importance_score")}
-重要度理由: {article.get("importance_reasons")}
-国タグ: {article.get("country")}
-主国: {article.get("primary_country")}
-分野タグ: {article.get("sector")}
-公開日: {article.get("date")}
-Source: {article.get("source")}
-URL: {article.get("url")}
-タイトル: {article.get("title")}
-本文:
-{article.get("body")}
+区分: {_article_value(article, 'type')}
+重要度スコア: {_article_value(article, 'importance_score', 'score')}
+重要度理由: {_article_value(article, 'importance_reasons', 'importance_reason')}
+国タグ: {_article_value(article, 'country', 'countries')}
+主国: {_article_value(article, 'primary_country', 'PrimaryCountry')}
+分野タグ: {_article_value(article, 'sector', 'sectors')}
+公開日: {_article_value(article, 'date')}
+Source: {_article_value(article, 'source')}
+URL: {_article_value(article, 'url')}
+タイトル: {_article_value(article, 'title')}
+本文抜粋:
+{_article_value(article, 'body', 'body_preview')}
 
 """
-
-        logger.info(
-            "generate_morning_summary: prompt_chars=%d input article count=%d morning summary model=%s reasoning_effort=%s verbosity=%s",
-            len(prompt),
-            len(items),
-            model,
-            reasoning_effort,
-            verbosity,
-        )
-
-        summary = _call_openai(
-            model=model,
-            prompt=prompt,
-            temperature=temperature,
-            reasoning_effort=reasoning_effort,
-            verbosity=verbosity,
-            max_output_tokens=max_output_tokens,
-            timeout=120,
-        ).replace("\n", "<br>")
-
+        logger.info("generate_morning_summary: model=%s prompt_chars=%d input article count=%d prompt article count=%d reasoning_effort=%s verbosity=%s max_output_tokens=%d timeout=%d", model, len(prompt), len(items), prompt_count, reasoning_effort, verbosity, max_output_tokens, timeout)
+        summary = _call_openai(model=model, prompt=prompt, temperature=temperature, reasoning_effort=reasoning_effort, verbosity=verbosity, max_output_tokens=max_output_tokens, timeout=timeout).replace("\n", "<br>")
         return f"""
         <div style="font-family:'Meiryo UI', sans-serif; padding:20px; background:#f5f7fa; border:1px solid #ddd; margin-bottom:24px; color:#333;">
-            <h2 style="margin-top:0;">■ 本日のニュースサマリ</h2>
+            <h2 style="margin-top:0;">■ 本日の事業ブリーフ</h2>
             <div style="line-height:1.7;">{summary}</div>
         </div>
         """
-
     except Exception as e:
-        logger.exception("generate_morning_summary failed: prompt_chars=%d", len(prompt) if 'prompt' in locals() else -1)
-        return f"<b>■本日のニュースサマリ</b><br>生成できませんでした（{type(e).__name__}）<br><br>"
+        logger.exception("generate_morning_summary failed: prompt_chars=%d", len(prompt))
+        return f"<b>■本日の事業ブリーフ</b><br>生成できませんでした（{type(e).__name__}）<br><br>"

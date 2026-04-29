@@ -57,7 +57,7 @@ def test_non_gpt5_model_uses_chat_completions_endpoint(monkeypatch):
     assert called["url"] == "https://api.openai.com/v1/chat/completions"
 
 
-def test_morning_summary_default_model_is_gpt54mini(monkeypatch):
+def test_morning_summary_default_model_is_gpt5mini(monkeypatch):
     monkeypatch.delenv("OPENAI_MORNING_SUMMARY_MODEL", raising=False)
     captured = {}
 
@@ -69,8 +69,8 @@ def test_morning_summary_default_model_is_gpt54mini(monkeypatch):
 
     html = openai_summarizer.generate_morning_summary([], "prompt")
 
-    assert "本日のニュースサマリ" in html
-    assert captured["model"] == "gpt-5.4-mini"
+    assert "本日の事業ブリーフ" in html
+    assert captured["model"] == "gpt-5-mini"
 
 
 def test_label_summary_default_model_is_gpt4omini(monkeypatch):
