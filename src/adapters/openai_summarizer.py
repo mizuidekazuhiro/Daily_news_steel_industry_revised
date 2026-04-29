@@ -15,24 +15,51 @@ def normalize_morning_summary_text(text):
     lines = [line.rstrip() for line in raw.split("\n")]
     while lines and not lines[0].strip():
         lines.pop(0)
-    if lines and re.sub(r"\s+", "", lines[0]).startswith("■本日の事業ブリーフ"):
-        lines.pop(0)
+    if lines:
+        normalized_header = re.sub(r"\s+", "", lines[0])
+        if normalized_header.startswith("■本日の事業ブリーフ") or normalized_header.startswith("■朝一サマリー"):
+            lines.pop(0)
     return "\n".join(lines).strip()
 
 
+def _strip_bullet_marker(text):
+    return re.sub(r"^[\-・*]\s*", "", str(text or "").strip())
+
+
 def _render_label_item(line):
-    escaped = html.escape(line.strip())
+    normalized_line = _strip_bullet_marker(line)
+    escaped = html.escape(normalized_line)
     for key in ("事実：", "示唆：", "見るべき点："):
-        prefix = f"- {key}"
-        if line.strip().startswith(prefix):
-            body = html.escape(line.strip()[len(prefix):].strip())
+        if normalized_line.startswith(key):
+            body = html.escape(normalized_line[len(key):].strip())
             return f'<li style="margin:6px 0;"><strong>{html.escape(key)}</strong> {body}</li>'
     return f'<li style="margin:6px 0;">{escaped}</li>'
 
 
-def render_morning_summary_html(summary_text):
-    section_titles = ["結論", "重要トピック", "商社目線の読み", "今日の確認ポイント", "根拠記事"]
+def _render_reference_articles(reference_articles):
+    refs = list(reference_articles or [])[:5]
+    if not refs:
+        return ""
+
+    parts = ['<h3 style="margin:16px 0 8px; font-size:17px; color:#1f2937;">〖根拠記事〗</h3>', '<ul style="margin:6px 0 10px; padding-left:18px;">']
+    for article in refs:
+        title = html.escape(str(article.get("title") or "(無題)"))
+        source = html.escape(str(article.get("source") or "不明"))
+        url = str(article.get("url") or "").strip()
+        if url:
+            safe_url = html.escape(url, quote=True)
+            title_html = f'<a href="{safe_url}" target="_blank" rel="noopener noreferrer">{title}</a>'
+        else:
+            title_html = title
+        parts.append(f'<li style="margin:6px 0;">{title_html}<br><span style="font-size:12px; color:#666;">Source: {source}</span></li>')
+    parts.append('</ul>')
+    return ''.join(parts)
+
+
+def render_morning_summary_html(summary_text, reference_articles=None):
+    section_titles = ["結論", "重要トピック", "商社目線の読み", "今日の確認ポイント"]
     section_pattern = re.compile(r"^【(" + "|".join(map(re.escape, section_titles)) + r")】\s*$")
+    gpt_reference_pattern = re.compile(r"^(【根拠記事】|〖根拠記事〗)$")
     topic_pattern = re.compile(r"^(\d+)\.\s*(.+)$")
 
     lines = [line.strip() for line in str(summary_text or "").split("\n")]
@@ -40,6 +67,7 @@ def render_morning_summary_html(summary_text):
     current_section = None
     in_list = False
     in_topic = False
+    skip_gpt_references = False
 
     def close_lists():
         nonlocal in_list, in_topic
@@ -52,6 +80,12 @@ def render_morning_summary_html(summary_text):
 
     for raw in lines:
         if not raw:
+            continue
+        if gpt_reference_pattern.match(raw):
+            close_lists()
+            skip_gpt_references = True
+            continue
+        if skip_gpt_references:
             continue
         section_match = section_pattern.match(raw)
         topic_match = topic_pattern.match(raw)
@@ -73,7 +107,8 @@ def render_morning_summary_html(summary_text):
             in_topic = True
             continue
 
-        if raw.startswith("-"):
+        bullet_line = _strip_bullet_marker(raw)
+        if bullet_line != raw:
             if not in_list:
                 parts.append('<ul style="margin:6px 0 10px; padding-left:18px;">')
                 in_list = True
@@ -87,8 +122,9 @@ def render_morning_summary_html(summary_text):
     return (
         '<div style="font-family:-apple-system, BlinkMacSystemFont, &quot;Yu Gothic&quot;, &quot;Meiryo&quot;, &quot;Meiryo UI&quot;, sans-serif; '
         'max-width:760px; margin:0 auto; line-height:1.75; color:#1f2937; background:#f7f8fa; border:1px solid #e5e7eb; padding:16px;">'
-        '<h2 style="margin:0 0 12px; font-size:22px;">■ 本日の事業ブリーフ</h2>'
+        '<h2 style="margin:0 0 12px; font-size:22px;">■ 朝一サマリー</h2>'
         + ''.join(parts)
+        + _render_reference_articles(reference_articles)
         + '</div>'
     )
 def _get_openai_api_key():
@@ -288,7 +324,7 @@ URL: {_article_value(article, 'url')}
             timeout=timeout,
         )
         normalized = normalize_morning_summary_text(summary_text)
-        return render_morning_summary_html(normalized)
+        return render_morning_summary_html(normalized, reference_articles=items)
     except Exception as e:
         logger.exception("generate_morning_summary failed: prompt_chars=%d", len(prompt))
-        return f"<b>■本日の事業ブリーフ</b><br>生成できませんでした（{type(e).__name__}）<br><br>"
+        return f"<b>■朝一サマリー</b><br>生成できませんでした（{type(e).__name__}）<br><br>"

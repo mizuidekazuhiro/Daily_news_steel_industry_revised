@@ -36,7 +36,7 @@ def test_generate_morning_summary_uses_passed_settings_and_header(monkeypatch):
 
     monkeypatch.setattr(openai_summarizer, "_call_openai", fake_call_openai)
     html = openai_summarizer.generate_morning_summary([], "prompt", {"model": "gpt-5-mini"})
-    assert "■ 本日の事業ブリーフ" in html
+    assert "■ 朝一サマリー" in html
     assert captured["model"] == "gpt-5-mini"
 
 
