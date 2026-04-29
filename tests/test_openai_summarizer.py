@@ -142,3 +142,9 @@ def test_generate_morning_summary_prompt_contains_article_ids(monkeypatch):
     )
 
     assert "記事ID: A1" in captured["prompt"]
+
+
+def test_generate_morning_summary_html_uses_meiryo_ui(monkeypatch):
+    monkeypatch.setattr(openai_summarizer, "_call_openai", lambda **kwargs: "【結論】\nok")
+    html = openai_summarizer.generate_morning_summary([], "prompt")
+    assert "font-family:'Meiryo UI','Meiryo',sans-serif" in html
