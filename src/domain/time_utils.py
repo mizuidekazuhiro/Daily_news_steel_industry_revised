@@ -50,11 +50,39 @@ def parse_publish_datetime(text, reference_time):
         hours = int(m.group(1)) * {"hour": 1, "day": 24, "week": 168}[m.group(2)]
         return ensure_aware_utc(reference_time - timedelta(hours=hours))
 
-    m = re.search(r"(\d+)\s*(時間||週)前", text)
+    m = re.search(r"(\d+)\s*(時間|日|週)前", text)
     if m:
         hours = int(m.group(1)) * {"時間": 1, "日": 24, "週": 168}[m.group(2)]
         return ensure_aware_utc(reference_time - timedelta(hours=hours))
 
+    return None
+
+
+def parse_publish_datetime_from_url(url, reference_time=None):
+    if not url:
+        return None
+
+    patterns = [
+        r"/(\d{4})/(\d{2})/(\d{2})(?:/|$)",
+        r"/(\d{4})-(\d{2})-(\d{2})(?:/|$)",
+        r"(\d{4})-(\d{2})-(\d{2})(?:/|$)",
+        r"(\d{4})(\d{2})(\d{2})",
+    ]
+
+    for pattern in patterns:
+        m = re.search(pattern, str(url))
+        if not m:
+            continue
+        try:
+            dt = datetime(int(m.group(1)), int(m.group(2)), int(m.group(3)), tzinfo=timezone.utc)
+        except ValueError:
+            continue
+
+        if reference_time:
+            ref_utc = ensure_aware_utc(reference_time)
+            if dt > ref_utc + timedelta(days=7):
+                return None
+        return dt
     return None
 
 

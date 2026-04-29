@@ -385,3 +385,12 @@ OPENAI_BRIEF_PROMPT_PATH=config/prompts/main_news_brief_ja.txt
   - `OPENAI_BRIEF_MAX_OUTPUT_TOKENS`
   - `OPENAI_BRIEF_TOP_N`
   - `OPENAI_BRIEF_PROMPT_PATH`
+
+## 公開日（published_at）判定と診断ログ
+
+- 公開日判定の優先順位は **本文抽出日付（scraped）→ Serper日付 → URL内日付** です。
+- `published_at` が欠落した記事は、URLに日付が含まれる場合のみ補完を試みます（`/YYYY/MM/DD/`, `/YYYY-MM-DD/`, slug内 `YYYY-MM-DD`, `YYYYMMDD`）。
+- いずれでも取得できない記事は安全側でスキップします。
+- **日付不明記事を当日扱いしない** 方針です。古い記事・固定ページ・企業/株価ページ混入を防ぐためです。
+- `after=0` が出た場合は `Date stats` ログを確認してください。`missing`（日付欠落）と `outside_window`（期間外）を分解して確認できます。
+- 冒頭ブリーフ（gpt-5-mini）の `max_output_tokens` は Responses API上で reasoning を含みます。途中切れ回避のため `3200` を推奨します。

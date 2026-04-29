@@ -27,6 +27,7 @@ from src.domain.time_utils import (
     now_utc,
     format_dt_jst,
     parse_publish_datetime,
+    parse_publish_datetime_from_url,
     ensure_aware_utc,
     JST,
     compute_lookback_window,
@@ -161,24 +162,65 @@ def main():
         queries = targets.get(label, [])
         articles = []
 
+        date_stats = {
+            "scraped_date_used": 0,
+            "serper_date_used": 0,
+            "url_date_used": 0,
+            "missing_published_at": 0,
+            "outside_window": 0,
+            "missing_samples": [],
+            "outside_window_samples": [],
+            "serper_date_samples": [],
+        }
+
         for q in queries:
             search_result = search_serper(q)
             if search_result == "SERPER_CREDIT_ERROR":
                 break
 
             for a in search_result:
-                serper_dt = parse_publish_datetime(a.get("date"), reference_time)
-                body, scraped_dt, body_excerpt, published_source = fetch_article(a.get("link"), reference_time)
+                url = a.get("link", "")
+                serper_raw = a.get("date")
+                serper_dt = parse_publish_datetime(serper_raw, reference_time)
+                body, scraped_dt, body_excerpt, fetched_published_source = fetch_article(url, reference_time)
                 if not body:
                     continue
 
-                final_dt = ensure_aware_utc(scraped_dt or serper_dt)
+                scraped_dt = ensure_aware_utc(scraped_dt)
+                url_dt = parse_publish_datetime_from_url(url, reference_time)
+
+                if scraped_dt:
+                    final_dt = scraped_dt
+                    published_source = fetched_published_source or "scraped"
+                    date_stats["scraped_date_used"] += 1
+                elif serper_dt:
+                    final_dt = ensure_aware_utc(serper_dt)
+                    published_source = "serper"
+                    date_stats["serper_date_used"] += 1
+                    if len(date_stats["serper_date_samples"]) < 5:
+                        date_stats["serper_date_samples"].append(serper_raw)
+                elif url_dt:
+                    final_dt = ensure_aware_utc(url_dt)
+                    published_source = "url"
+                    date_stats["url_date_used"] += 1
+                else:
+                    final_dt = None
+                    published_source = "missing"
+
                 if not final_dt:
-                    logging.warning("Skipping article with missing published_at: %s", a.get("link", ""))
+                    date_stats["missing_published_at"] += 1
+                    if len(date_stats["missing_samples"]) < 5:
+                        date_stats["missing_samples"].append(url)
+                    logging.warning(
+                        "Skipping article with missing published_at: label=%s title=%s url=%s serper_date=%s source=%s",
+                        label,
+                        a.get("title", ""),
+                        url,
+                        serper_raw,
+                        a.get("source", ""),
+                    )
                     continue
 
-                if not scraped_dt:
-                    published_source = "serper"
                 articles.append({
                     "title": a.get("title", ""),
                     "body": body_excerpt,
@@ -223,17 +265,54 @@ def main():
             articles.extend(alert_articles[:need])
 
         before_window_filter = len(articles)
-        articles = [
-            article
-            for article in articles
-            if is_within_window(article.get("final_dt"), window_start_jst, window_end_jst)
-        ]
+        outside_window_urls = []
+        filtered_articles = []
+        for article in articles:
+            if is_within_window(article.get("final_dt"), window_start_jst, window_end_jst):
+                filtered_articles.append(article)
+            else:
+                date_stats["outside_window"] += 1
+                if len(outside_window_urls) < 5:
+                    outside_window_urls.append(article.get("url", ""))
+        articles = filtered_articles
+        date_stats["outside_window_samples"] = outside_window_urls
+
         logging.info(
             "Window filter label=%s before=%d after=%d",
             label,
             before_window_filter,
             len(articles),
         )
+        latest_final_dt = articles[0].get("final_dt") if articles else None
+        oldest_final_dt = articles[-1].get("final_dt") if articles else None
+        logging.info(
+            "Date stats label=%s scraped=%d serper=%d url=%d missing=%d outside_window=%d latest=%s oldest=%s",
+            label,
+            date_stats["scraped_date_used"],
+            date_stats["serper_date_used"],
+            date_stats["url_date_used"],
+            date_stats["missing_published_at"],
+            date_stats["outside_window"],
+            latest_final_dt.isoformat() if latest_final_dt else None,
+            oldest_final_dt.isoformat() if oldest_final_dt else None,
+        )
+        if date_stats["missing_samples"]:
+            logging.info("Missing published_at samples label=%s urls=%s", label, date_stats["missing_samples"])
+        if date_stats["outside_window_samples"]:
+            logging.info("Outside window samples label=%s urls=%s", label, date_stats["outside_window_samples"])
+
+        if any(k in label for k in ["国内鉄筋", "電炉", "鉄筋電炉"]):
+            logging.info(
+                "Rebar/EAF diagnostics label=%s before_window_filter=%d after_window_filter=%d missing_published_at_count=%d outside_window_count=%d top_missing_urls=%s top_outside_window_urls=%s top_serper_dates=%s",
+                label,
+                before_window_filter,
+                len(articles),
+                date_stats["missing_published_at"],
+                date_stats["outside_window"],
+                date_stats["missing_samples"][:5],
+                date_stats["outside_window_samples"][:5],
+                date_stats["serper_date_samples"][:5],
+            )
 
         apply_scores(articles, notion_rules=notion_rules)
         deduped_articles, dedup_stats = deduplicate_articles(articles)
