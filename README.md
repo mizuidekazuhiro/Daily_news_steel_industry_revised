@@ -133,10 +133,17 @@ Daily Summaryを作成しArticlesとRelation
 - `limits.global_summary_top_n`
 - `openai.label_summary`（`model`, `reasoning_effort`, `verbosity`, `max_output_tokens`, `timeout`）
 - `openai.morning_summary`（`model`, `reasoning_effort`, `verbosity`, `max_output_tokens`, `timeout`）
+  - 推奨値: `model=gpt-5-mini`, `reasoning_effort=low`, `verbosity=medium`, `max_output_tokens=4500`, `timeout=180`
 
 ### プロンプト設定（`config/prompts.yml`）
 - `summarize_system`
 - `morning_summary_user`
+
+## 朝一サマリ（メール本文）について
+
+- 朝一サマリはプレーンテキスト改行置換ではなく、セクション見出し・トピック・箇条書きをHTML整形して出力します。
+- `■ 本日の事業ブリーフ` 見出しはアプリ側HTMLで付与し、LLM出力側の重複見出しは正規化で除去します。
+- OpenAI Responses API が `status=incomplete`（例: `max_output_tokens` 到達）を返した場合は検知して再試行し、途中文をメール本文へ出さない設計です。
 
 ### コスト方針
 - 冒頭ブリーフのみ `gpt-5-mini` を利用

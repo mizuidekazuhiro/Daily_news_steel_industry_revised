@@ -1,11 +1,96 @@
+import html
 import logging
 import os
+import re
 
 import requests
 
 logger = logging.getLogger(__name__)
 
 
+
+
+def normalize_morning_summary_text(text):
+    raw = str(text or "").replace("\r\n", "\n").strip()
+    lines = [line.rstrip() for line in raw.split("\n")]
+    while lines and not lines[0].strip():
+        lines.pop(0)
+    if lines and re.sub(r"\s+", "", lines[0]).startswith("■本日の事業ブリーフ"):
+        lines.pop(0)
+    return "\n".join(lines).strip()
+
+
+def _render_label_item(line):
+    escaped = html.escape(line.strip())
+    for key in ("事実：", "示唆：", "見るべき点："):
+        prefix = f"- {key}"
+        if line.strip().startswith(prefix):
+            body = html.escape(line.strip()[len(prefix):].strip())
+            return f'<li style="margin:6px 0;"><strong>{html.escape(key)}</strong> {body}</li>'
+    return f'<li style="margin:6px 0;">{escaped}</li>'
+
+
+def render_morning_summary_html(summary_text):
+    section_titles = ["結論", "重要トピック", "商社目線の読み", "今日の確認ポイント", "根拠記事"]
+    section_pattern = re.compile(r"^【(" + "|".join(map(re.escape, section_titles)) + r")】\s*$")
+    topic_pattern = re.compile(r"^(\d+)\.\s*(.+)$")
+
+    lines = [line.strip() for line in str(summary_text or "").split("\n")]
+    parts = []
+    current_section = None
+    in_list = False
+    in_topic = False
+
+    def close_lists():
+        nonlocal in_list, in_topic
+        if in_list:
+            parts.append("</ul>")
+            in_list = False
+        if in_topic:
+            parts.append("</div>")
+            in_topic = False
+
+    for raw in lines:
+        if not raw:
+            continue
+        section_match = section_pattern.match(raw)
+        topic_match = topic_pattern.match(raw)
+
+        if section_match:
+            close_lists()
+            title = section_match.group(1)
+            parts.append(f'<h3 style="margin:16px 0 8px; font-size:17px; color:#1f2937;">【{html.escape(title)}】</h3>')
+            current_section = title
+            continue
+
+        if topic_match and current_section == "重要トピック":
+            close_lists()
+            num, title = topic_match.groups()
+            parts.append('<div style="background:#ffffff; border:1px solid #e5e7eb; border-radius:8px; padding:12px 14px; margin-bottom:12px;">')
+            parts.append(f'<div style="font-weight:700; margin-bottom:6px;">{html.escape(num)}. {html.escape(title)}</div>')
+            parts.append('<ul style="margin:0; padding-left:18px;">')
+            in_list = True
+            in_topic = True
+            continue
+
+        if raw.startswith("-"):
+            if not in_list:
+                parts.append('<ul style="margin:6px 0 10px; padding-left:18px;">')
+                in_list = True
+            parts.append(_render_label_item(raw))
+            continue
+
+        close_lists()
+        parts.append(f'<p style="margin:6px 0;">{html.escape(raw)}</p>')
+
+    close_lists()
+    return (
+        '<div style="font-family:-apple-system, BlinkMacSystemFont, &quot;Yu Gothic&quot;, &quot;Meiryo&quot;, &quot;Meiryo UI&quot;, sans-serif; '
+        'max-width:760px; margin:0 auto; line-height:1.75; color:#1f2937; background:#f7f8fa; border:1px solid #e5e7eb; padding:16px;">'
+        '<h2 style="margin:0 0 12px; font-size:22px;">■ 本日の事業ブリーフ</h2>'
+        + ''.join(parts)
+        + '</div>'
+    )
 def _get_openai_api_key():
     return os.environ.get("OPENAI_API_KEY", "")
 
@@ -37,34 +122,59 @@ def _call_openai_chat(messages, model="gpt-4o-mini", temperature=0.2, timeout=12
     return data["choices"][0]["message"]["content"]
 
 
-def _call_openai_responses(input_text, model="gpt-5-mini", reasoning_effort="medium", verbosity="medium", max_output_tokens=2200, timeout=180):
-    api_key = _get_openai_api_key()
-    if not api_key:
-        raise RuntimeError("OPENAI_API_KEY is empty")
-    res = requests.post(
-        "https://api.openai.com/v1/responses",
-        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-        json={
-            "model": model,
-            "input": input_text,
-            "reasoning": {"effort": reasoning_effort},
-            "text": {"verbosity": verbosity},
-            "max_output_tokens": max_output_tokens,
-        },
-        timeout=timeout,
-    )
-    if res.status_code >= 400:
-        logger.error("OpenAI API failed: api=responses status=%s model=%s body=%s", res.status_code, model, res.text[:2000])
-    res.raise_for_status()
-    data = res.json()
-    logger.info("OpenAI API success: api=responses usage=%s", _extract_usage(data))
+def _extract_responses_text(data):
     if data.get("output_text"):
         return data["output_text"]
     for out in data.get("output", []):
         for content in out.get("content", []):
             if content.get("type") == "output_text" and content.get("text"):
                 return content["text"]
-    raise RuntimeError("Responses API output text not found")
+    return None
+
+
+def _call_openai_responses(input_text, model="gpt-5-mini", reasoning_effort="medium", verbosity="medium", max_output_tokens=2200, timeout=180):
+    api_key = _get_openai_api_key()
+    if not api_key:
+        raise RuntimeError("OPENAI_API_KEY is empty")
+    retry = 0
+    current_max_output_tokens = max_output_tokens
+    while retry <= 1:
+        res = requests.post(
+            "https://api.openai.com/v1/responses",
+            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+            json={
+                "model": model,
+                "input": input_text,
+                "reasoning": {"effort": reasoning_effort},
+                "text": {"verbosity": verbosity},
+                "max_output_tokens": current_max_output_tokens,
+            },
+            timeout=timeout,
+        )
+        if res.status_code >= 400:
+            logger.error("OpenAI API failed: api=responses status=%s model=%s body=%s", res.status_code, model, res.text[:2000])
+        res.raise_for_status()
+        data = res.json()
+        usage = _extract_usage(data)
+        logger.info("OpenAI API success: api=responses usage=%s", usage)
+        output_text = _extract_responses_text(data) or ""
+        if data.get("status") == "incomplete" or data.get("incomplete_details"):
+            logger.error(
+                "OpenAI responses incomplete: model=%s incomplete_details=%s usage=%s output_head=%s",
+                model,
+                data.get("incomplete_details"),
+                usage,
+                output_text[:400],
+            )
+            retry += 1
+            if retry > 1:
+                raise RuntimeError("Morning summary generation failed due to incomplete response")
+            current_max_output_tokens = min(current_max_output_tokens * 2, 6000)
+            continue
+        if output_text:
+            return output_text
+        raise RuntimeError("Responses API output text not found")
+    raise RuntimeError("Responses API request failed")
 
 
 def _call_openai(*, model, prompt, system_prompt=None, temperature=0.2, reasoning_effort="low", verbosity="low", max_output_tokens=1200, timeout=120):
@@ -156,13 +266,17 @@ URL: {_article_value(article, 'url')}
 
 """
         logger.info("generate_morning_summary: model=%s prompt_chars=%d input article count=%d prompt article count=%d reasoning_effort=%s verbosity=%s max_output_tokens=%d timeout=%d", model, len(prompt), len(items), prompt_count, reasoning_effort, verbosity, max_output_tokens, timeout)
-        summary = _call_openai(model=model, prompt=prompt, temperature=temperature, reasoning_effort=reasoning_effort, verbosity=verbosity, max_output_tokens=max_output_tokens, timeout=timeout).replace("\n", "<br>")
-        return f"""
-        <div style="font-family:'Meiryo UI', sans-serif; padding:20px; background:#f5f7fa; border:1px solid #ddd; margin-bottom:24px; color:#333;">
-            <h2 style="margin-top:0;">■ 本日の事業ブリーフ</h2>
-            <div style="line-height:1.7;">{summary}</div>
-        </div>
-        """
+        summary_text = _call_openai(
+            model=model,
+            prompt=prompt,
+            temperature=temperature,
+            reasoning_effort=reasoning_effort,
+            verbosity=verbosity,
+            max_output_tokens=max_output_tokens,
+            timeout=timeout,
+        )
+        normalized = normalize_morning_summary_text(summary_text)
+        return render_morning_summary_html(normalized)
     except Exception as e:
         logger.exception("generate_morning_summary failed: prompt_chars=%d", len(prompt))
         return f"<b>■本日の事業ブリーフ</b><br>生成できませんでした（{type(e).__name__}）<br><br>"
