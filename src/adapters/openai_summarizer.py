@@ -20,17 +20,23 @@ def normalize_morning_summary_text(text):
     return "\n".join(lines).strip()
 
 
+def sanitize_bullet_text(text):
+    cleaned = re.sub(r"^[\s\-・•●‣]+", "", str(text or "")).strip()
+    cleaned = re.sub(r"^\*\*(.+)\*\*$", r"\1", cleaned).strip()
+    return cleaned
+
+
 def _render_label_item(line):
-    escaped = html.escape(line.strip())
+    clean = sanitize_bullet_text(line)
+    escaped = html.escape(clean)
     for key in ("事実：", "示唆：", "見るべき点："):
-        prefix = f"- {key}"
-        if line.strip().startswith(prefix):
-            body = html.escape(line.strip()[len(prefix):].strip())
+        if clean.startswith(key):
+            body = html.escape(clean[len(key):].strip())
             return f'<li style="margin:6px 0;"><strong>{html.escape(key)}</strong> {body}</li>'
     return f'<li style="margin:6px 0;">{escaped}</li>'
 
 
-def render_morning_summary_html(summary_text):
+def render_morning_summary_html(summary_text, source_articles=None):
     section_titles = ["結論", "重要トピック", "商社目線の読み", "今日の確認ポイント", "根拠記事"]
     section_pattern = re.compile(r"^【(" + "|".join(map(re.escape, section_titles)) + r")】\s*$")
     topic_pattern = re.compile(r"^(\d+)\.\s*(.+)$")
@@ -50,6 +56,13 @@ def render_morning_summary_html(summary_text):
             parts.append("</div>")
             in_topic = False
 
+    evidence_map = {
+        (a.get("title") or "").strip(): a
+        for a in (source_articles or [])
+        if a.get("title")
+    }
+    in_evidence = False
+
     for raw in lines:
         if not raw:
             continue
@@ -61,6 +74,7 @@ def render_morning_summary_html(summary_text):
             title = section_match.group(1)
             parts.append(f'<h3 style="margin:16px 0 8px; font-size:17px; color:#1f2937;">【{html.escape(title)}】</h3>')
             current_section = title
+            in_evidence = title == "根拠記事"
             continue
 
         if topic_match and current_section == "重要トピック":
@@ -73,15 +87,29 @@ def render_morning_summary_html(summary_text):
             in_topic = True
             continue
 
-        if raw.startswith("-"):
+        if raw.startswith(("-", "・", "•", "●", "‣")):
             if not in_list:
                 parts.append('<ul style="margin:6px 0 10px; padding-left:18px;">')
                 in_list = True
+            if in_evidence:
+                title = sanitize_bullet_text(raw)
+                article = evidence_map.get(title)
+                if article and article.get("url"):
+                    linked = f'<a href="{html.escape(article.get("url"))}">{html.escape(title)}</a>'
+                    source = html.escape(article.get("source") or "不明")
+                    parts.append(f'<li style="margin:6px 0;">{linked}（{source}）</li>')
+                elif article:
+                    source = html.escape(article.get("source") or "不明")
+                    parts.append(f'<li style="margin:6px 0;">{html.escape(title)}（{source}）</li>')
+                else:
+                    parts.append(f'<li style="margin:6px 0;">{html.escape(title)}（リンク未特定）</li>')
+                continue
             parts.append(_render_label_item(raw))
             continue
 
         close_lists()
-        parts.append(f'<p style="margin:6px 0;">{html.escape(raw)}</p>')
+        stripped = re.sub(r"\*\*(.+?)\*\*", r"\1", sanitize_bullet_text(raw))
+        parts.append(f'<p style="margin:6px 0;">{html.escape(stripped)}</p>')
 
     close_lists()
     return (
@@ -316,7 +344,7 @@ URL: {_article_value(article, 'url')}
             timeout=timeout,
         )
         normalized = normalize_morning_summary_text(summary_text)
-        return render_morning_summary_html(normalized)
+        return render_morning_summary_html(normalized, source_articles=items)
     except Exception as e:
         logger.exception("generate_morning_summary failed: prompt_chars=%d", len(prompt))
         return f"<b>■本日の事業ブリーフ</b><br>生成できませんでした（{type(e).__name__}）<br><br>"

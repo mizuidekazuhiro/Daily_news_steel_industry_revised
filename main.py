@@ -22,7 +22,7 @@ from src.config import env
 from src.config.notion import load_notion_config
 from src.config.prompts import load_prompts
 from src.config.settings import load_settings
-from src.domain.article_dedup import deduplicate_articles, filter_negative_importance_articles
+from src.domain.article_dedup import deduplicate_articles
 from src.domain.time_utils import (
     now_utc,
     format_dt_jst,
@@ -34,7 +34,14 @@ from src.domain.time_utils import (
     is_within_window,
 )
 from src.usecases.score_articles import apply_scores
-from src.usecases.summary_select import select_summary_articles, importance_value
+from src.usecases.summary_select import (
+    select_summary_articles,
+    importance_value,
+    extract_hard_exclusion_rules,
+    apply_hard_exclusion,
+    sort_for_summary,
+)
+from src.domain.rule_engine import build_rules
 from src.usecases.tag_articles import apply_tags, load_tag_rules
 from src.usecases.target_coverage import build_processing_labels, summarize_target_coverage
 
@@ -145,6 +152,8 @@ def main():
     logging.info("Notion exporter configured for articles and daily summary")
 
     fetch_fx_rates()
+    engine_rules = build_rules(notion_rules)
+    hard_exclusion_rules = extract_hard_exclusion_rules(engine_rules)
     notice_html = """
     <div style="font-family:'Meiryo UI', sans-serif; font-size:12px; color:#666; margin-bottom:16px;">
     ※本メールはAIにより自動生成しています。内容の正確性については、必ず原文記事等により別途ご確認ください。
@@ -317,27 +326,33 @@ def main():
         apply_scores(articles, notion_rules=notion_rules)
         deduped_articles, dedup_stats = deduplicate_articles(articles)
         all_articles_for_storage = deduped_articles
-        articles_for_summary, removed_negative = filter_negative_importance_articles(deduped_articles)
+        articles_for_summary, hard_excluded_articles = apply_hard_exclusion(deduped_articles, hard_exclusion_rules)
 
         all_articles_for_storage.sort(
             key=lambda x: (x.get("score", 0), x.get("final_dt")),
             reverse=True,
         )
-        articles_for_summary.sort(
-            key=lambda x: (x.get("score", 0), x.get("final_dt")),
-            reverse=True,
-        )
+        articles_for_summary = sort_for_summary(articles_for_summary)
+        negative_included_count = sum(1 for a in articles_for_summary if importance_value(a) < 0)
+        target_max_pick = (targets_by_label.get(label, {}) or {}).get("max_pick")
+        label_pick_limit = int(target_max_pick or max_articles or 5)
 
         logging.info(
-            "Label filter stats label=%s before_dedup_count=%d after_dedup_count=%d removed_by_normalized_url=%d removed_by_normalized_title=%d removed_by_body_similarity=%d removed_by_negative_importance=%d summary_candidate_count_after_filters=%d",
+            "Label filter stats label=%s before_dedup_count=%d after_dedup_count=%d removed_by_normalized_url=%d removed_by_normalized_title=%d removed_by_body_similarity=%d hard_excluded_count=%d negative_score_included_count=%d summary_candidate_count=%d selected_for_label_summary_count=%d selected_titles=%s selected_scores=%s selected_urls=%s hard_exclusion_reasons=%s",
             label,
             dedup_stats["before_dedup_count"],
             dedup_stats["after_dedup_count"],
             dedup_stats["removed_by_normalized_url"],
             dedup_stats["removed_by_normalized_title"],
             dedup_stats["removed_by_body_similarity"],
-            len(removed_negative),
+            len(hard_excluded_articles),
+            negative_included_count,
             len(articles_for_summary),
+            len(articles_for_summary[:label_pick_limit]),
+            [a.get("title", "") for a in articles_for_summary[:label_pick_limit]],
+            [importance_value(a) for a in articles_for_summary[:label_pick_limit]],
+            [a.get("url", "") for a in articles_for_summary[:label_pick_limit]],
+            [a.get("hard_exclusion_reasons", []) for a in hard_excluded_articles],
         )
         if dedup_stats.get("merge_details"):
             for detail in dedup_stats["merge_details"]:
@@ -348,14 +363,6 @@ def main():
                     detail.get("removed_title"),
                     detail.get("kept_title"),
                 )
-        if removed_negative:
-            for article in removed_negative:
-                logging.debug(
-                    "Filtered negative importance label=%s title=%s",
-                    label,
-                    article.get("title", ""),
-                )
-
         if all_articles_for_storage:
             all_scored_articles.extend(articles_for_summary)
             for article in all_articles_for_storage:
@@ -376,13 +383,13 @@ def main():
                     "score": articles_for_summary[0].get("score", 0),
                     "html": summarize_with_gpt(
                         label,
-                        articles_for_summary[:max_articles],
-                        articles_for_summary[:max_articles],
+                        articles_for_summary[:label_pick_limit],
+                        articles_for_summary[:label_pick_limit],
                         prompts.get("summarize_system", ""),
                         label_openai_settings,
                     ),
                 })
-                total_articles += len(articles_for_summary[:max_articles])
+                total_articles += len(articles_for_summary[:label_pick_limit])
             else:
                 no_article_labels.append(label)
         else:
@@ -404,7 +411,6 @@ def main():
     global_summary_top_n = settings.get("limits", {}).get("global_summary_top_n", 12)
     summary_candidates = select_summary_articles(
         all_scored_articles,
-        min_importance=0,
         exclude_types=["stock"],
     )
     summary_candidates.sort(
