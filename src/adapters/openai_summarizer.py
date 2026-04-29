@@ -132,7 +132,7 @@ def _extract_responses_text(data):
     return None
 
 
-def _call_openai_responses(input_text, model="gpt-5-mini", reasoning_effort="medium", verbosity="medium", max_output_tokens=2200, timeout=180):
+def _call_openai_responses(input_text, model="gpt-5-mini", reasoning_effort="medium", verbosity="medium", max_output_tokens=2200, timeout=180, prompt_chars=None):
     api_key = _get_openai_api_key()
     if not api_key:
         raise RuntimeError("OPENAI_API_KEY is empty")
@@ -157,6 +157,18 @@ def _call_openai_responses(input_text, model="gpt-5-mini", reasoning_effort="med
         data = res.json()
         usage = _extract_usage(data)
         logger.info("OpenAI API success: api=responses usage=%s", usage)
+        if usage and current_max_output_tokens:
+            output_tokens = int(usage.get("output_tokens") or 0)
+            reasoning_tokens = int(usage.get("reasoning_tokens") or 0)
+            if output_tokens >= int(current_max_output_tokens * 0.95):
+                logger.warning(
+                    "OpenAI Responses output near max_output_tokens: model=%s output_tokens=%d reasoning_tokens=%d max_output_tokens=%d prompt_chars=%s",
+                    model,
+                    output_tokens,
+                    reasoning_tokens,
+                    current_max_output_tokens,
+                    prompt_chars,
+                )
         output_text = _extract_responses_text(data) or ""
         if data.get("status") == "incomplete" or data.get("incomplete_details"):
             logger.error(
@@ -180,7 +192,7 @@ def _call_openai_responses(input_text, model="gpt-5-mini", reasoning_effort="med
 def _call_openai(*, model, prompt, system_prompt=None, temperature=0.2, reasoning_effort="low", verbosity="low", max_output_tokens=1200, timeout=120):
     if _is_gpt5_model(model):
         input_text = f"{system_prompt}\n\n{prompt}" if system_prompt else prompt
-        return _call_openai_responses(input_text=input_text, model=model, reasoning_effort=reasoning_effort, verbosity=verbosity, max_output_tokens=max_output_tokens, timeout=timeout)
+        return _call_openai_responses(input_text=input_text, model=model, reasoning_effort=reasoning_effort, verbosity=verbosity, max_output_tokens=max_output_tokens, timeout=timeout, prompt_chars=len(input_text))
     messages = [{"role": "user", "content": prompt}]
     if system_prompt:
         messages = [{"role": "system", "content": system_prompt}, {"role": "user", "content": prompt}]
