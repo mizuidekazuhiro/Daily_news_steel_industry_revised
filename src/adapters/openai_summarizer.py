@@ -22,7 +22,9 @@ def normalize_morning_summary_text(text):
 
 def sanitize_bullet_text(text):
     cleaned = re.sub(r"^[\s\-・•●‣]+", "", str(text or "")).strip()
-    cleaned = re.sub(r"^\*\*(.+)\*\*$", r"\1", cleaned).strip()
+    cleaned = re.sub(r"\[(.+?)\]\((https?://[^)]+)\)", r"\1", cleaned)
+    cleaned = re.sub(r"`([^`]+)`", r"\1", cleaned)
+    cleaned = re.sub(r"\*\*(.+?)\*\*", r"\1", cleaned).strip()
     return cleaned
 
 
@@ -51,7 +53,11 @@ def _extract_evidence_article_id(text):
     return m.group(1).upper() if m else None
 
 
-def _build_evidence_items(evidence_lines, source_articles):
+def _extract_article_ids(text):
+    return [m.upper() for m in re.findall(r"\bA\d+\b", str(text or ""), flags=re.IGNORECASE)]
+
+
+def _build_evidence_items(evidence_lines, source_articles, body_lines):
     evidence_map_by_id = {}
     evidence_map_by_title = {}
     ordered_articles = list(source_articles or [])
@@ -64,32 +70,40 @@ def _build_evidence_items(evidence_lines, source_articles):
             evidence_map_by_title[(title or "").strip()] = article
             evidence_map_by_title[_normalize_evidence_title(title)] = article
 
-    selected = []
+    evidence_article_ids_from_gpt = []
     for line in evidence_lines:
-        article = None
-        article_id = _extract_evidence_article_id(line)
-        if article_id:
-            article = evidence_map_by_id.get(article_id)
-        if not article:
-            clean = sanitize_bullet_text(line)
-            article = evidence_map_by_title.get(clean) or evidence_map_by_title.get(_normalize_evidence_title(clean))
-        if article and article not in selected:
-            selected.append(article)
-        if len(selected) >= 5:
-            break
+        evidence_article_ids_from_gpt.extend(_extract_article_ids(line))
+    evidence_article_ids_from_gpt = list(dict.fromkeys(evidence_article_ids_from_gpt))
 
-    fallback_used = False
-    if not selected:
-        fallback_used = True
-        selected = ordered_articles[:5]
+    evidence_article_ids_used_in_body = []
+    for line in body_lines:
+        evidence_article_ids_used_in_body.extend(_extract_article_ids(line))
+    evidence_article_ids_used_in_body = list(dict.fromkeys(evidence_article_ids_used_in_body))
+
+    selected_ids = []
+    for article_id in evidence_article_ids_used_in_body:
+        if article_id in evidence_map_by_id and article_id not in selected_ids and len(selected_ids) < 5:
+            selected_ids.append(article_id)
+    for article_id in evidence_article_ids_from_gpt:
+        if article_id in evidence_map_by_id and article_id not in selected_ids and len(selected_ids) < 5:
+            selected_ids.append(article_id)
+    if len(selected_ids) < 5:
+        for article in ordered_articles:
+            aid = article.get("article_id")
+            if aid and aid not in selected_ids:
+                selected_ids.append(aid)
+            if len(selected_ids) >= 5:
+                break
+    fallback_used = not evidence_article_ids_from_gpt
+    evidence_article_ids_auto_added = [a for a in selected_ids if a not in evidence_article_ids_from_gpt]
+    selected = [evidence_map_by_id[aid] for aid in selected_ids if aid in evidence_map_by_id]
 
     missing_url_count = sum(1 for a in selected if not a.get("url"))
-    extracted_ids = [_extract_evidence_article_id(line) for line in evidence_lines]
-    return selected, extracted_ids, fallback_used, missing_url_count
+    return selected, evidence_article_ids_from_gpt, evidence_article_ids_used_in_body, evidence_article_ids_auto_added, fallback_used, missing_url_count
 
 
 def render_morning_summary_html(summary_text, source_articles=None):
-    section_titles = ["結論", "重要トピック", "商社目線の読み", "今日の確認ポイント", "根拠記事"]
+    section_titles = ["結論", "重要トピック", "事業上の含意", "商社目線の読み", "今日の確認ポイント", "根拠記事"]
     section_pattern = re.compile(r"^【(" + "|".join(map(re.escape, section_titles)) + r")】\s*$")
     topic_pattern = re.compile(r"^(\d+)\.\s*(.+)$")
 
@@ -110,6 +124,7 @@ def render_morning_summary_html(summary_text, source_articles=None):
 
     in_evidence = False
     evidence_lines = []
+    body_lines = []
 
     for raw in lines:
         if not raw:
@@ -143,35 +158,40 @@ def render_morning_summary_html(summary_text, source_articles=None):
                 evidence_lines.append(raw)
                 continue
             parts.append(_render_label_item(raw))
+            body_lines.append(raw)
             continue
 
         close_lists()
-        stripped = re.sub(r"\*\*(.+?)\*\*", r"\1", sanitize_bullet_text(raw))
+        stripped = sanitize_bullet_text(raw)
         parts.append(f'<p style="margin:6px 0;">{html.escape(stripped)}</p>')
+        body_lines.append(raw)
 
-    if in_evidence and current_section == "根拠記事":
+    if current_section == "根拠記事" or evidence_lines:
         close_lists()
-        selected_articles, extracted_ids, fallback_used, missing_url_count = _build_evidence_items(evidence_lines, source_articles)
+        selected_articles, extracted_ids, used_in_body, auto_added, fallback_used, missing_url_count = _build_evidence_items(evidence_lines, source_articles, body_lines)
         logger.info(
-            "Morning summary evidence linking: evidence_article_ids_from_gpt=%s evidence_linked_count=%d evidence_fallback_used=%s evidence_missing_url_count=%d",
+            "Morning summary evidence linking: evidence_article_ids_from_gpt=%s evidence_article_ids_used_in_body=%s evidence_article_ids_auto_added=%s evidence_linked_count=%d evidence_fallback_used=%s evidence_missing_url_count=%d",
             extracted_ids,
+            used_in_body,
+            auto_added,
             len(selected_articles),
             fallback_used,
             missing_url_count,
         )
         parts.append('<ul style="margin:6px 0 10px; padding-left:18px;">')
         for article in selected_articles:
+            aid = html.escape(article.get("article_id") or "")
             title = html.escape((article.get("title") or "（無題）"))
             source = html.escape(article.get("source") or "不明")
             url = article.get("url") or ""
             if url:
-                parts.append(f'<li style="margin:6px 0;"><a href="{html.escape(url, quote=True)}">{title}</a>（{source}）</li>')
+                parts.append(f'<li style="margin:6px 0;"><a href="{html.escape(url, quote=True)}">[{aid}] {title}</a>（{source}）</li>')
             else:
-                parts.append(f'<li style="margin:6px 0;">{title}（{source}／URL不明）</li>')
+                parts.append(f'<li style="margin:6px 0;">[{aid}] {title}（{source}／URL不明）</li>')
         parts.append('</ul>')
     close_lists()
     return (
-        '<div style="font-family:-apple-system, BlinkMacSystemFont, &quot;Yu Gothic&quot;, &quot;Meiryo&quot;, &quot;Meiryo UI&quot;, sans-serif; '
+        '<div style="font-family:\'Meiryo UI\',\'Meiryo\',sans-serif; '
         'max-width:760px; margin:0 auto; line-height:1.75; color:#1f2937; background:#f7f8fa; border:1px solid #e5e7eb; padding:16px;">'
         '<h2 style="margin:0 0 12px; font-size:22px;">■ 本日の事業ブリーフ</h2>'
         + ''.join(parts)
@@ -339,7 +359,7 @@ def summarize_with_gpt(label, summary_articles, display_articles, system_prompt,
         else:
             logger.info("summarize_with_gpt: label=%s model=%s prompt_chars=%d input article count=%d reasoning_effort=%s verbosity=%s max_output_tokens=%d", label, model, len(prompt), len(summary_articles), reasoning_effort, verbosity, max_output_tokens)
             body = _call_openai(model=model, prompt=prompt, system_prompt=system_prompt, temperature=temperature, reasoning_effort=reasoning_effort, verbosity=verbosity, max_output_tokens=max_output_tokens, timeout=timeout).replace("\n", "<br>")
-        out = f"""<div style=\"font-family:'Meiryo UI', sans-serif; line-height:1.7; padding:22px; color:#333; border-bottom:1px solid #ddd;\">\n            <h2 style=\"color:#0055a5; margin-bottom:10px;\">■{label}</h2>\n            <div style=\"margin-bottom:14px;\">{body}</div>\n        """
+        out = f"""<div style=\"font-family:'Meiryo UI','Meiryo',sans-serif; line-height:1.7; padding:22px; color:#333; border-bottom:1px solid #ddd;\">\n            <h2 style=\"color:#0055a5; margin-bottom:10px;\">■{label}</h2>\n            <div style=\"margin-bottom:14px;\">{body}</div>\n        """
         for i, a in enumerate(display_articles, 1):
             date_only = a["date"].split(" ")[0] if a.get("date") else "不明"
             out += f"""\n            <div style=\"margin-bottom:8px;\">\n                <strong>{i}.</strong> <a href=\"{a['url']}\">{a['title']}</a><br>\n                <span style=\"font-size:12px; color:#666;\">Published: {date_only} | Source: {a['source']}</span>\n            </div>\n            """

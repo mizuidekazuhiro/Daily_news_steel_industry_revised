@@ -57,7 +57,7 @@ def test_evidence_article_id_links_even_when_gpt_title_differs():
         summary,
         source_articles=[{"article_id": "A1", "title": "Oil rises", "url": "https://example.com/a", "source": "Reuters"}],
     )
-    assert '<a href="https://example.com/a">Oil rises</a>（Reuters）' in html
+    assert '<a href="https://example.com/a">[A1] Oil rises</a>（Reuters）' in html
 
 
 def test_evidence_fallback_uses_top_articles_when_no_ids():
@@ -69,8 +69,8 @@ def test_evidence_fallback_uses_top_articles_when_no_ids():
             {"article_id": "A2", "title": "T2", "url": "", "source": "S2"},
         ],
     )
-    assert '<a href="https://example.com/1">T1</a>（S1）' in html
-    assert 'T2（S2／URL不明）' in html
+    assert '<a href="https://example.com/1">[A1] T1</a>（S1）' in html
+    assert '[A2] T2（S2／URL不明）' in html
 
 
 def test_evidence_escapes_url_title_source():
@@ -82,6 +82,32 @@ def test_evidence_escapes_url_title_source():
     assert '&lt;script&gt;' in html
     assert 'href="https://a.com/?q=&quot;x&quot;"' in html
     assert '（R&amp;&lt;）' in html
+
+
+def test_heading_uses_new_business_implication_title():
+    summary = "【事業上の含意】\n- 論点A"
+    html = openai_summarizer.render_morning_summary_html(summary)
+    assert "【事業上の含意】" in html
+
+
+def test_body_article_ids_are_auto_added_to_evidence():
+    summary = "【重要トピック】\n1. x\n- 事実：需要増（A1）\n【根拠記事】\n- A2｜別記事"
+    html = openai_summarizer.render_morning_summary_html(
+        summary,
+        source_articles=[
+            {"article_id": "A1", "title": "T1", "url": "https://example.com/1", "source": "S1"},
+            {"article_id": "A2", "title": "T2", "url": "https://example.com/2", "source": "S2"},
+        ],
+    )
+    assert "[A1] T1" in html
+
+
+def test_markdown_syntax_removed_but_anchor_preserved():
+    summary = "【結論】\n**強い市況**\n`code`\n[txt](https://x)"
+    html = openai_summarizer.render_morning_summary_html(summary)
+    assert "**" not in html
+    assert "`" not in html
+    assert "[txt](https://x)" not in html
 
 
 def test_call_openai_responses_raises_on_incomplete(monkeypatch):

@@ -155,7 +155,7 @@ def main():
     engine_rules = build_rules(notion_rules)
     hard_exclusion_rules = extract_hard_exclusion_rules(engine_rules)
     notice_html = """
-    <div style="font-family:'Meiryo UI', sans-serif; font-size:12px; color:#666; margin-bottom:16px;">
+    <div style="font-family:'Meiryo UI','Meiryo',sans-serif; font-size:12px; color:#666; margin-bottom:16px;">
     ※本メールはAIにより自動生成しています。内容の正確性については、必ず原文記事等により別途ご確認ください。
     </div>
     """
@@ -405,7 +405,7 @@ def main():
     if no_article_labels:
         joined = "、".join(no_article_labels)
         sections_html += f"""
-        <div style="font-family:'Meiryo UI', sans-serif; padding:16px; color:#777; font-size:13px; border-bottom:1px solid #ddd;">
+        <div style="font-family:'Meiryo UI','Meiryo',sans-serif; padding:16px; color:#777; font-size:13px; border-bottom:1px solid #ddd;">
             該当記事なし企業一覧：{joined}
         </div><br>
         """
@@ -436,12 +436,13 @@ def main():
         prompts.get("morning_summary_user", ""),
         morning_openai_settings,
     )
-    final_html = (
+    final_html_body = (
         notice_html
         + morning_summary_html
         + sections_html
         + generate_stock_section()
     )
+    final_html = f"""<div style="font-family:'Meiryo UI','Meiryo',sans-serif;">{final_html_body}</div>"""
 
     send_mail(final_html, f"Daily report｜鉄鋼ニュース記事纏め_{today_str}")
 
