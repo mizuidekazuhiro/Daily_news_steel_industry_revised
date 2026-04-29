@@ -19,7 +19,7 @@ openai:
   morning_summary:
     model: gpt-5-mini
     temperature: 0.2
-    reasoning_effort: medium
+    reasoning_effort: low
     verbosity: medium
-    max_output_tokens: 2200
+    max_output_tokens: 4500
     timeout: 180
