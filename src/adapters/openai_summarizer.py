@@ -36,6 +36,58 @@ def _render_label_item(line):
     return f'<li style="margin:6px 0;">{escaped}</li>'
 
 
+def _normalize_evidence_title(text):
+    normalized = str(text or "").strip()
+    normalized = normalized.replace("　", " ")
+    normalized = re.sub(r"[\"'“”‘’「」『』（）()\[\]]", "", normalized)
+    normalized = re.sub(r"\s*（[^）]*）\s*$", "", normalized)
+    normalized = re.sub(r"\s*\([^)]*\)\s*$", "", normalized)
+    normalized = re.sub(r"\s+", "", normalized)
+    return normalized
+
+
+def _extract_evidence_article_id(text):
+    m = re.search(r"\b(A\d+)\b", str(text or ""), flags=re.IGNORECASE)
+    return m.group(1).upper() if m else None
+
+
+def _build_evidence_items(evidence_lines, source_articles):
+    evidence_map_by_id = {}
+    evidence_map_by_title = {}
+    ordered_articles = list(source_articles or [])
+    for idx, article in enumerate(ordered_articles, 1):
+        article_id = str(article.get("article_id") or article.get("evidence_id") or f"A{idx}").upper()
+        article["article_id"] = article_id
+        evidence_map_by_id[article_id] = article
+        title = article.get("title")
+        if title:
+            evidence_map_by_title[(title or "").strip()] = article
+            evidence_map_by_title[_normalize_evidence_title(title)] = article
+
+    selected = []
+    for line in evidence_lines:
+        article = None
+        article_id = _extract_evidence_article_id(line)
+        if article_id:
+            article = evidence_map_by_id.get(article_id)
+        if not article:
+            clean = sanitize_bullet_text(line)
+            article = evidence_map_by_title.get(clean) or evidence_map_by_title.get(_normalize_evidence_title(clean))
+        if article and article not in selected:
+            selected.append(article)
+        if len(selected) >= 5:
+            break
+
+    fallback_used = False
+    if not selected:
+        fallback_used = True
+        selected = ordered_articles[:5]
+
+    missing_url_count = sum(1 for a in selected if not a.get("url"))
+    extracted_ids = [_extract_evidence_article_id(line) for line in evidence_lines]
+    return selected, extracted_ids, fallback_used, missing_url_count
+
+
 def render_morning_summary_html(summary_text, source_articles=None):
     section_titles = ["結論", "重要トピック", "商社目線の読み", "今日の確認ポイント", "根拠記事"]
     section_pattern = re.compile(r"^【(" + "|".join(map(re.escape, section_titles)) + r")】\s*$")
@@ -56,12 +108,8 @@ def render_morning_summary_html(summary_text, source_articles=None):
             parts.append("</div>")
             in_topic = False
 
-    evidence_map = {
-        (a.get("title") or "").strip(): a
-        for a in (source_articles or [])
-        if a.get("title")
-    }
     in_evidence = False
+    evidence_lines = []
 
     for raw in lines:
         if not raw:
@@ -92,17 +140,7 @@ def render_morning_summary_html(summary_text, source_articles=None):
                 parts.append('<ul style="margin:6px 0 10px; padding-left:18px;">')
                 in_list = True
             if in_evidence:
-                title = sanitize_bullet_text(raw)
-                article = evidence_map.get(title)
-                if article and article.get("url"):
-                    linked = f'<a href="{html.escape(article.get("url"))}">{html.escape(title)}</a>'
-                    source = html.escape(article.get("source") or "不明")
-                    parts.append(f'<li style="margin:6px 0;">{linked}（{source}）</li>')
-                elif article:
-                    source = html.escape(article.get("source") or "不明")
-                    parts.append(f'<li style="margin:6px 0;">{html.escape(title)}（{source}）</li>')
-                else:
-                    parts.append(f'<li style="margin:6px 0;">{html.escape(title)}（リンク未特定）</li>')
+                evidence_lines.append(raw)
                 continue
             parts.append(_render_label_item(raw))
             continue
@@ -111,6 +149,26 @@ def render_morning_summary_html(summary_text, source_articles=None):
         stripped = re.sub(r"\*\*(.+?)\*\*", r"\1", sanitize_bullet_text(raw))
         parts.append(f'<p style="margin:6px 0;">{html.escape(stripped)}</p>')
 
+    if in_evidence and current_section == "根拠記事":
+        close_lists()
+        selected_articles, extracted_ids, fallback_used, missing_url_count = _build_evidence_items(evidence_lines, source_articles)
+        logger.info(
+            "Morning summary evidence linking: evidence_article_ids_from_gpt=%s evidence_linked_count=%d evidence_fallback_used=%s evidence_missing_url_count=%d",
+            extracted_ids,
+            len(selected_articles),
+            fallback_used,
+            missing_url_count,
+        )
+        parts.append('<ul style="margin:6px 0 10px; padding-left:18px;">')
+        for article in selected_articles:
+            title = html.escape((article.get("title") or "（無題）"))
+            source = html.escape(article.get("source") or "不明")
+            url = article.get("url") or ""
+            if url:
+                parts.append(f'<li style="margin:6px 0;"><a href="{html.escape(url, quote=True)}">{title}</a>（{source}）</li>')
+            else:
+                parts.append(f'<li style="margin:6px 0;">{title}（{source}／URL不明）</li>')
+        parts.append('</ul>')
     close_lists()
     return (
         '<div style="font-family:-apple-system, BlinkMacSystemFont, &quot;Yu Gothic&quot;, &quot;Meiryo&quot;, &quot;Meiryo UI&quot;, sans-serif; '
@@ -312,12 +370,16 @@ def generate_morning_summary(all_articles, user_prompt, openai_settings=None):
             items = list(all_articles or [])
 
         prompt_count = 0
-        for article in items:
+        for idx, article in enumerate(items, 1):
+            article_id = f"A{idx}"
+            article["article_id"] = article_id
+            article.setdefault("evidence_id", article_id)
             if str(article.get("type", "")).lower() == "stock":
                 continue
             prompt_count += 1
             label = _article_value(article, "label", "target_label")
             prompt += f"""
+記事ID: {article_id}
 会社/テーマ: {label}
 区分: {_article_value(article, 'type')}
 重要度スコア: {_article_value(article, 'importance_score', 'score')}
